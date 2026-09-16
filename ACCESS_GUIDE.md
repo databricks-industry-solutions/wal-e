@@ -108,7 +108,7 @@ Your SA will walk you through these steps on a screen share call.
 
 ```bash
 # Clone the repository
-gh repo clone priyal-c/wal-e
+gh repo clone databricks-industry-solutions/wal-e
 cd wal-e
 
 # Recommended: installer auto-detects a Python 3.10+ interpreter
@@ -124,7 +124,7 @@ wal-e --version
 **Windows (PowerShell):**
 
 ```powershell
-git clone https://github.com/priyal-c/wal-e.git
+git clone https://github.com/databricks-industry-solutions/wal-e.git
 cd wal-e
 
 # Recommended: installer auto-detects a Python 3.10+ interpreter (uses the 'py' launcher)

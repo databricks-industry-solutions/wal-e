@@ -131,7 +131,7 @@ Your Databricks SA will guide you through these steps on a call or screen share.
 
 ```bash
 # Clone the repo (public — no authentication required)
-git clone https://github.com/priyal-c/wal-e.git
+git clone https://github.com/databricks-industry-solutions/wal-e.git
 cd wal-e
 
 # Recommended: the installer auto-detects a Python 3.10+ interpreter
@@ -144,7 +144,7 @@ python3.10 -m pip install -e .
 **Windows (PowerShell):**
 
 ```powershell
-git clone https://github.com/priyal-c/wal-e.git
+git clone https://github.com/databricks-industry-solutions/wal-e.git
 cd wal-e
 
 # Recommended: the installer auto-detects a Python 3.10+ interpreter (uses the 'py' launcher)
@@ -264,7 +264,7 @@ As the SA, you don't need access to the customer's workspace. Your role is to gu
    - Schedule a 30-minute screen share session
 
 2. On the Call (Customer shares their screen)
-   - Guide them through 'git clone https://github.com/priyal-c/wal-e.git' and './install.sh --cli' (or 'python3.10 -m pip install -e .')
+   - Guide them through 'git clone https://github.com/databricks-industry-solutions/wal-e.git' and './install.sh --cli' (or 'python3.10 -m pip install -e .')
    - Walk them through 'databricks configure' with their own workspace URL
    - Have them authenticate via OAuth ('databricks auth login') or create a short-lived PAT token (1 day lifetime)
    - Run 'wal-e validate' to confirm access

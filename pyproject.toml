@@ -20,7 +20,7 @@ wal-e = "wal_e.cli:main"
 mcp = ["fastmcp>=2.0.0"]
 
 [project.urls]
-Repository = "https://github.com/priyal-chindarkar_data/wal-e"
+Repository = "https://github.com/databricks-industry-solutions/wal-e"
 
 [tool.setuptools.packages.find]
 where = ["src"]
