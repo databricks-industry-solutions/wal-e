@@ -5,4 +5,4 @@ An agentic assessment tool that evaluates Databricks workspaces against
 the Well-Architected Lakehouse Framework.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
