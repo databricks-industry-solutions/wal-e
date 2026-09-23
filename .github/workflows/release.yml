@@ -1,0 +1,81 @@
+name: Release
+
+# Cuts a GitHub release automatically when the version in pyproject.toml changes
+# on main. Bump the version (in pyproject.toml and src/wal_e/__init__.py) in a PR,
+# merge it, and this workflow tags v<version> and publishes the release. If the tag
+# already exists it no-ops, so re-runs are safe.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - pyproject.toml
+      - src/wal_e/__init__.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read and verify version
+        id: version
+        run: |
+          py=$(grep -E '^version\s*=' pyproject.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          init=$(grep -E '__version__' src/wal_e/__init__.py | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$py" ]; then
+            echo "::error::Could not read version from pyproject.toml"
+            exit 1
+          fi
+          if [ "$py" != "$init" ]; then
+            echo "::error::Version mismatch: pyproject.toml=$py src/wal_e/__init__.py=$init"
+            exit 1
+          fi
+          echo "version=$py" >> "$GITHUB_OUTPUT"
+          echo "tag=v$py" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether tag already exists
+        id: check
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${{ steps.version.outputs.tag }} already exists; skipping release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install and test
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest
+          pytest -q
+
+      - name: Create tag and publish release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag "${{ steps.version.outputs.tag }}" "${{ github.sha }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes
