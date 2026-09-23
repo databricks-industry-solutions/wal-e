@@ -91,16 +91,18 @@ WAL-E needs **read-only** access to the workspace. It makes **30 HTTP GET API ca
 
 ### Permissions by Assessment Depth
 
-> **Run as an account admin (highly recommended).** Account-admin access, together with the `--deep` system-tables scan, produces the most complete and accurate assessment across all seven pillars. It is also what lets you confirm the account-level controls — SSO, SCIM, network isolation, and audit logging — that a workspace-only role can only report as *unverifiable*.
+> **Run as an account admin (highly recommended).** Account-admin access unlocks the `--deep` system-tables scan (billing, audit events, query history), which is its real advantage for a broad, accurate assessment. It does **not**, on its own, let WAL-E confirm account-level controls — customer-managed VPC/VNet, Private Link/PSC, Network Connectivity Configs, account SSO/SCIM, and audit log delivery live in the accounts-console API, which WAL-E's workspace-only collection does not call. WAL-E reports those as *unverifiable*; confirming them requires a dedicated account-level assessment path (currently in testing), and Azure VNet injection additionally requires an Azure Resource Manager (ARM) check.
 
 | Role                              | Access Level                                 | What You Get                                                                                        | Coverage |
 | --------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------- | :------: |
-| **Account admin** _(recommended)_ | Workspace + metastore admin **+ system tables** | Everything below, plus billing, audit, query history, and confirmation of account-level SSO/SCIM/network controls | **100%** |
+| **Account admin** _(recommended)_ | Workspace + metastore admin **+ system tables** | Everything below, plus billing, audit events, and query history from system tables (+11 deep-scan best practices) | **~95%\*** |
 | Metastore admin                   | Workspace admin + metastore admin            | Above + all catalogs, storage credentials, external locations                                       | **~95%** |
 | Workspace admin                   | Workspace admin                              | All clusters, warehouses, security config, all jobs                                                 | **~80%** |
 | User                              | Regular user                                 | Own clusters, permitted catalogs, own jobs                                                          |   ~40%   |
 
-**Recommended:** account admin for a true, all-pillar picture; at minimum workspace admin + metastore admin for a meaningful assessment.
+**Recommended:** account admin to unlock the `--deep` system-tables scan; at minimum workspace admin + metastore admin for a meaningful assessment.
+
+\* Account-level controls — customer-managed VPC/VNet, Private Link/PSC, Network Connectivity Configs, account SSO/SCIM, and audit log delivery — are served by the accounts-console API, which WAL-E's workspace-only collection does not call. WAL-E marks them *unverifiable* rather than as gaps. Confirming them requires a dedicated account-level assessment path (currently in testing); Azure VNet injection additionally needs an ARM check.
 
 ### What WAL-E Will NEVER Do
 

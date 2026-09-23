@@ -219,7 +219,7 @@ rm -rf ./my-assessment
 
 ## 5. Required Permissions by Collector
 
-> **Recommended role: account admin.** WAL-E works at any access level, but an account admin gives the truest, most accurate assessment across all seven pillars — it unlocks the `--deep` system-tables scan and is what lets you confirm the account-level controls (SSO, SCIM, network isolation, audit logging) that a workspace-only role can only report as *unverifiable*. See [Permissions by Coverage](#permissions-by-coverage) for the full role ladder.
+> **Recommended role: account admin.** WAL-E works at any access level; account admin is recommended because it unlocks the `--deep` system-tables scan (billing, audit events, query history). It does **not**, on its own, let WAL-E confirm account-level controls (customer-managed VPC/VNet, Private Link/PSC, NCC, account SSO/SCIM, audit log delivery) — those are served by the accounts-console API, which WAL-E's workspace-only collection does not call, so WAL-E reports them as *unverifiable*. Confirming them requires a dedicated account-level assessment path (currently in testing), and Azure VNet injection additionally needs an ARM check. See [Permissions by Coverage](#permissions-by-coverage) for the full role ladder.
 
 WAL-E runs 7 collectors. Here is exactly what each one needs:
 
@@ -423,14 +423,16 @@ Install through whichever interpreter reports 3.10 or newer, using `<that-python
 
 ### Permissions by Coverage
 
-> **Account admin is highly recommended.** It produces the most complete and accurate picture across all seven pillars, is required to enable the `--deep` system-tables scan, and is what lets you confirm the account-level controls — SSO, SCIM, network isolation, and audit logging — that a workspace-only role can only mark as *unverifiable*.
+> **Account admin is highly recommended** — it is required to enable the `--deep` system-tables scan (billing, audit events, query history), which is its real advantage. It does **not**, on its own, let WAL-E confirm account-level controls — customer-managed VPC/VNet, Private Link/PSC, NCC, account SSO/SCIM, and audit log delivery are served by the accounts-console API, which WAL-E's workspace-only collection does not call, so WAL-E marks them *unverifiable*. Confirming them requires a dedicated account-level assessment path (currently in testing); Azure VNet injection additionally needs an ARM check.
 
 | Role | Access Level | Coverage |
 |------|-------------|:--------:|
-| **Account admin** _(recommended)_ | Workspace + metastore admin + system tables | **100%** |
+| **Account admin** _(recommended)_ | Workspace + metastore admin + system tables | **~95%\*** |
 | Metastore admin | Workspace admin + metastore admin | **~95%** |
 | Workspace admin | Workspace admin | **~80%** |
 | User | Regular user | ~40% of best practices |
+
+\* Account admin's advantage is unlocking the `--deep` system-tables scan (billing, audit events, query history, +11 deep-scan best practices) — not extra verified controls. Account-level controls (customer-managed VPC/VNet, Private Link/PSC, NCC, account SSO/SCIM, audit log delivery) live in the accounts-console API, which WAL-E's workspace-only collection does not call, so WAL-E marks them *unverifiable*. Confirming them requires a dedicated account-level assessment path (currently in testing); Azure VNet injection additionally needs an ARM check.
 
 ---
 
