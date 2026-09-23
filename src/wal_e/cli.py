@@ -559,6 +559,8 @@ def _run_assess(args: argparse.Namespace) -> int:
         formats=args.format or ["md", "csv", "pptx", "audit", "docx"],
         deep_scan=deep,
         warehouse_id=wh_id,
+        account_profile=getattr(args, "account_profile", ""),
+        account_id=getattr(args, "account_id", ""),
     )
     engine = AssessmentEngine(config)
 
@@ -704,13 +706,16 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
 
   Role                         Coverage
-  {C.GREEN}Account admin (recommended){C.RESET} .. 100% — all pillars; unlocks --deep + account-level SSO/SCIM/network/audit
+  {C.GREEN}Account admin (recommended){C.RESET} .. 100% — all pillars; add --account-profile to confirm account-level network isolation (Private Link/NCC/customer-managed VPC), account SCIM, and log delivery
   {C.GREEN}Metastore admin{C.RESET} .............. ~95% of best practices scored
   {C.YELLOW}Workspace admin{C.RESET} .............. ~80% of best practices scored
   Regular user ................. ~40% of best practices scored
 
-  {C.DIM}Running as an account admin gives the truest, all-pillar picture. Lower roles
-  leave account-level controls (SSO/SCIM, network, audit) unverifiable.{C.RESET}
+  {C.DIM}Account-level controls (network isolation, account SCIM, log delivery) live on the
+  accounts-console host, not the workspace API. Pass --account-profile <profile> (a CLI
+  profile for the accounts host, with account_id) to confirm them; otherwise they are
+  reported as unverifiable. On Azure, VNet injection is an ARM property and still needs an
+  ARM check even with --account-profile.{C.RESET}
 
 {C.BOLD}API CALLS MADE (ALL READ-ONLY){C.RESET}
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
@@ -730,6 +735,14 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
     GET  /api/2.0/sql/warehouses
     GET  /api/2.0/cluster-policies/list
     GET  /api/2.0/instance-pools/list
+
+  {C.BLUE}Account (optional){C.RESET}              {C.DIM}[--account-profile; account admin]{C.RESET}
+    GET  /api/2.0/accounts/{{id}}/workspaces
+    GET  /api/2.0/accounts/{{id}}/networks
+    GET  /api/2.0/accounts/{{id}}/private-access-settings
+    GET  /api/2.0/accounts/{{id}}/network-connectivity-configs
+    GET  /api/2.0/accounts/{{id}}/scim/v2/Groups
+    GET  /api/2.0/accounts/{{id}}/log-delivery
 
   {C.BLUE}Security (6 calls){C.RESET}              {C.DIM}[workspace admin REQUIRED]{C.RESET}
     GET  /api/2.0/workspace-conf
@@ -899,6 +912,10 @@ def main() -> int:
                                help="Deep scan: query system tables (billing, compute, query history, "
                                     "audit) via a SQL warehouse for operational reality analysis. "
                                     "Requires --warehouse-id and SELECT on system.* schemas.")
+    assess_parser.add_argument("--account-profile", default="", metavar="PROFILE",
+        help="CLI profile for the accounts-console host (account admin). Confirms account-level network isolation (Private Link/NCC/customer-managed VPC), account SCIM, and log delivery that a workspace-only run reports as unverifiable.")
+    assess_parser.add_argument("--account-id", default="", metavar="UUID",
+        help="Databricks account UUID. Optional if the account profile already carries account_id.")
     assess_parser.add_argument("--warehouse-id", default="", metavar="ID",
                                help="SQL warehouse ID for --deep scan. If omitted, WAL-E auto-selects "
                                     "the best available warehouse (prefers serverless).")

@@ -18,6 +18,10 @@ wal-e assess --profile wal-assessment --output ./my-assessment --format all
 # Also quantifies auto-termination $ savings for interactive clusters (10/30/60-min policies)
 wal-e assess --profile wal-assessment --deep --warehouse-id <ID> --format all
 
+# Account scan (adds account-console API: confirms network isolation, account SCIM, log delivery)
+# Needs a CLI profile for the accounts host carrying account_id. On Azure, VNet injection still needs ARM.
+wal-e assess --profile wal-assessment --deep --warehouse-id <ID> --account-profile wal-account
+
 # Validate workspace access before running
 wal-e validate --profile wal-assessment
 
@@ -35,7 +39,7 @@ wal-e setup --guide
 
 | Component | Path | Description |
 |-----------|------|-------------|
-| **Collectors** | `src/wal_e/collectors/` | Data collection from Databricks APIs + system tables (incl. `ai.py` for Mosaic AI / GenAI assets) |
+| **Collectors** | `src/wal_e/collectors/` | Data collection from Databricks APIs + system tables (incl. `ai.py` for Mosaic AI / GenAI assets, `account.py` for account-console network/SCIM/audit confirmation via `--account-profile`) |
 | **Framework** | `src/wal_e/framework/` | WAL scoring engine (145 best practices, 7 pillars) |
 | **Reporters** | `src/wal_e/reporters/` | Report generators (MD, CSV, HTML, PPTX, Audit) |
 | **Core** | `src/wal_e/core/` | Orchestration engine, config, cloud detection |

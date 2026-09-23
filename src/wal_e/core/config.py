@@ -59,6 +59,8 @@ class WalEConfig:
     cloud_provider: str = ""  # auto-detected: "aws", "azure", "gcp", "unknown"
     deep_scan: bool = False  # --deep: include system tables queries
     warehouse_id: str = ""  # SQL warehouse ID for system table queries
+    account_profile: str = ""  # CLI profile for the accounts-console host (account admin)
+    account_id: str = ""  # Databricks account UUID (resolved from the account profile if unset)
     formats: list[Literal["md", "csv", "html", "pptx", "audit"]] = field(
         default_factory=lambda: ["md", "audit"]
     )
@@ -70,6 +72,21 @@ class WalEConfig:
         # Auto-detect cloud provider from workspace host
         if not self.cloud_provider:
             self.cloud_provider = detect_cloud_provider(self.workspace_host)
+        # Resolve the account_id from the account profile when one is configured
+        # but no explicit account_id was passed.
+        if self.account_profile and not self.account_id:
+            self.account_id = self._resolve_account_id(self.account_profile)
+
+    def _resolve_account_id(self, profile: str) -> str:
+        """Read account_id from the account profile's .databrickscfg section."""
+        config_path = self._get_config_path()
+        if not config_path.exists():
+            return ""
+        parser = configparser.ConfigParser()
+        parser.read(config_path)
+        if profile in parser:
+            return parser[profile].get("account_id", "")
+        return ""
 
     def _get_config_path(self) -> Path:
         """Get path to Databricks CLI config file."""
