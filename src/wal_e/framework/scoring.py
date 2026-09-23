@@ -151,7 +151,7 @@ def _score_gov_005(data: dict) -> tuple[int, str]:
 def _score_gov_006(data: dict) -> tuple[int, str]:
     """Govern AI assets together with data (Models/Vector Search in Unity Catalog)."""
     ai = _get(data, "AICollector") or {}
-    uc_models = ai.get("uc_model_count", 0) or 0
+    uc_models, derived = _uc_models_present(ai)
     ws_models = ai.get("ws_registry_model_count", 0) or 0
     ep_total = ai.get("endpoint_count", 0) or 0
     ext_eps = ai.get("external_model_endpoint_count", 0) or 0
@@ -159,6 +159,8 @@ def _score_gov_006(data: dict) -> tuple[int, str]:
 
     # Models registered in Unity Catalog = AI assets governed with data.
     if uc_models > 0 and ws_models == 0:
+        if derived:
+            return 2, f"{uc_models} UC-registered model(s) served from Unity Catalog (Vector Search indexes: {vs_indexes}). AI assets governed with data."
         return 2, f"{uc_models} model(s) governed in Unity Catalog (Vector Search indexes: {vs_indexes}). AI assets governed with data."
     if uc_models > 0 and ws_models > 0:
         return 1, f"{uc_models} UC model(s) but {ws_models} still in the workspace registry. Migrate all models to Unity Catalog."
@@ -309,12 +311,30 @@ def _score_gov_015(data: dict) -> tuple[int, str]:
     return 0, "Unity Catalog not detected. BROWSE privilege requires UC. Enable UC first."
 
 
+def _uc_models_present(ai: dict) -> tuple[int, bool]:
+    """Return (uc_model_count, derived_from_serving).
+
+    Enumerating UC models needs metastore-admin scope and often returns empty
+    even when models are in use. Serving endpoints that serve UC_MODEL entities
+    prove UC-registered models exist, so fall back to that count to avoid a
+    "no models in UC" false negative. The bool flags when the count is derived
+    from serving endpoints rather than confirmed by the UC models API.
+    """
+    uc_models = ai.get("uc_model_count", 0) or 0
+    if uc_models > 0:
+        return uc_models, False
+    served = ai.get("uc_served_model_count", 0) or 0
+    return served, served > 0
+
+
 def _score_gov_016(data: dict) -> tuple[int, str]:
     """Models registered in Unity Catalog (not the legacy workspace registry)."""
     ai = _get(data, "AICollector") or {}
-    uc_models = ai.get("uc_model_count", 0) or 0
+    uc_models, derived = _uc_models_present(ai)
     ws_models = ai.get("ws_registry_model_count", 0) or 0
     if uc_models > 0 and ws_models == 0:
+        if derived:
+            return 2, f"{uc_models} UC-registered model(s) are served from Unity Catalog. Models in UC in use."
         return 2, f"All {uc_models} registered model(s) are in Unity Catalog. Centralized model governance in place."
     if uc_models > 0 and ws_models > 0:
         return 1, f"{uc_models} model(s) in UC but {ws_models} remain in the workspace registry. Migrate remaining models to Models in UC."
@@ -328,13 +348,20 @@ def _score_gov_018(data: dict) -> tuple[int, str]:
     ai = _get(data, "AICollector") or {}
     llm = ai.get("llm_endpoint_count", 0) or 0
     logged = ai.get("endpoints_with_inference_tables", 0) or 0
+    fm_system = ai.get("foundation_model_system_endpoint_count", 0) or 0
     if llm == 0:
+        if fm_system > 0:
+            return 2, (
+                f"No customer-owned LLM endpoints requiring payload logging. "
+                f"{fm_system} Databricks-managed foundation-model endpoint(s) are present "
+                "(pay-per-token); log payloads on any AI Gateway route that fronts production traffic."
+            )
         return 2, "No LLM/GenAI endpoints requiring payload logging detected."
     if logged >= llm:
-        return 2, f"All {llm} LLM endpoint(s) log payloads via inference tables for audit and monitoring."
+        return 2, f"All {llm} customer LLM endpoint(s) log payloads via inference tables for audit and monitoring."
     if logged > 0:
-        return 1, f"{logged}/{llm} LLM endpoint(s) log payloads. Enable inference tables on the remaining endpoints."
-    return 0, f"{llm} LLM endpoint(s) without payload logging. Enable AI Gateway inference tables for auditability."
+        return 1, f"{logged}/{llm} customer LLM endpoint(s) log payloads. Enable inference tables on the remaining endpoints."
+    return 0, f"{llm} customer LLM endpoint(s) without payload logging. Enable AI Gateway inference tables for auditability."
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +450,7 @@ def _score_int_007(data: dict) -> tuple[int, str]:
 def _score_int_008(data: dict) -> tuple[int, str]:
     """Open ML standards (MLflow / Models in Unity Catalog)."""
     ai = _get(data, "AICollector") or {}
-    uc_models = ai.get("uc_model_count", 0) or 0
+    uc_models, _derived = _uc_models_present(ai)
     endpoints = ai.get("endpoint_count", 0) or (_get(data, "OperationsCollector") or {}).get("endpoint_count", 0) or 0
     if uc_models > 0:
         return 2, f"Open ML standards in use: {uc_models} MLflow model(s) in Unity Catalog ({endpoints} serving endpoints)."
@@ -530,7 +557,11 @@ def _score_ops_003(data: dict) -> tuple[int, str]:
 def _score_ops_004(data: dict) -> tuple[int, str]:
     """MLOps processes."""
     ops = _get(data, "OperationsCollector") or {}
-    endpoint_count = ops.get("endpoint_count", 0) or 0
+    ai = _get(data, "AICollector") or {}
+    uc_models, _derived = _uc_models_present(ai)
+    endpoint_count = ops.get("endpoint_count", 0) or ai.get("endpoint_count", 0) or 0
+    if uc_models > 0:
+        return 2, f"MLOps in place: {uc_models} model(s) registered in Unity Catalog and served via {endpoint_count} endpoint(s)."
     if endpoint_count > 0:
         return 1, f"{endpoint_count} serving endpoints; Model Registry not verifiable from API. Register models in MLflow."
     return 0, "No Model Registry. Adopt MLOps with MLflow."
@@ -894,13 +925,20 @@ def _score_sec_015(data: dict) -> tuple[int, str]:
     ai = _get(data, "AICollector") or {}
     llm = ai.get("llm_endpoint_count", 0) or 0
     guarded = ai.get("endpoints_with_guardrails", 0) or 0
+    fm_system = ai.get("foundation_model_system_endpoint_count", 0) or 0
     if llm == 0:
+        if fm_system > 0:
+            return 2, (
+                f"No customer-owned LLM endpoints requiring guardrails. "
+                f"{fm_system} Databricks-managed foundation-model endpoint(s) are present "
+                "(pay-per-token); apply AI Gateway PII/safety guardrails on any route that fronts production traffic."
+            )
         return 2, "No LLM/GenAI endpoints requiring guardrails detected."
     if guarded >= llm:
-        return 2, f"All {llm} LLM endpoint(s) have guardrails (PII/safety) configured via AI Gateway."
+        return 2, f"All {llm} customer LLM endpoint(s) have guardrails (PII/safety) configured via AI Gateway."
     if guarded > 0:
-        return 1, f"{guarded}/{llm} LLM endpoint(s) have guardrails. Add PII/safety guardrails to the remaining endpoints."
-    return 0, f"{llm} LLM endpoint(s) without guardrails. Configure AI Gateway PII filtering and safety filters."
+        return 1, f"{guarded}/{llm} customer LLM endpoint(s) have guardrails. Add PII/safety guardrails to the remaining endpoints."
+    return 0, f"{llm} customer LLM endpoint(s) without guardrails. Configure AI Gateway PII filtering and safety filters."
 
 
 def _score_sec_016(data: dict) -> tuple[int, str]:
@@ -1105,7 +1143,13 @@ def _score_rel_022(data: dict) -> tuple[int, str]:
     prod = ai.get("prod_llm_endpoint_count", 0) or 0
     prod_pt = ai.get("prod_llm_provisioned_throughput", 0) or 0
     prod_stz = ai.get("prod_llm_scale_to_zero", 0) or 0
+    fm_system = ai.get("foundation_model_system_endpoint_count", 0) or 0
     if llm == 0:
+        if fm_system > 0:
+            return 1, (
+                f"No customer-owned LLM endpoints. {fm_system} Databricks-managed foundation-model "
+                "endpoint(s) are pay-per-token; use provisioned throughput on a custom endpoint for production SLAs."
+            )
         return 1, "No LLM endpoints detected. Use provisioned throughput for production LLM serving SLAs."
     if prod == 0:
         return 1, f"{llm} LLM endpoint(s), none clearly production-named. Use provisioned throughput for production SLAs (heuristic by name)."
@@ -1788,8 +1832,27 @@ def _score_sec_014(data: dict) -> tuple[int, str]:
     ae = st["audit_events"]
     changes = ae.get("permission_changes_30d", 0)
     total_events = ae.get("total_events_30d", 0)
+    # Rate-aware: raw permission-change volume scales with overall workspace
+    # activity, so a fixed absolute floor mislabels busy-but-healthy workspaces.
+    # Only flag when changes are BOTH high in absolute terms AND a meaningful
+    # share of all audit events.
+    share = (changes / total_events) if total_events else 0.0
+    pct = share * 100
+    if changes > 500 and share >= 0.02:
+        return 0, (
+            f"{changes} permission changes in 30 days ({pct:.2f}% of {total_events} events). "
+            "High churn and a large share of activity — review governance and approvals."
+        )
+    if changes > 200 and share >= 0.005:
+        return 1, (
+            f"{changes} permission changes in 30 days ({pct:.2f}% of {total_events} events). "
+            "Ensure changes follow an approval process."
+        )
     if changes > 200:
-        return 0, f"{changes} permission changes in 30 days (of {total_events} total events). High churn — review governance."
+        return 1, (
+            f"{changes} permission changes in 30 days, but only {pct:.3f}% of {total_events} events. "
+            "Volume tracks overall activity; sample changes for unexpected grants."
+        )
     if changes > 50:
         return 1, f"{changes} permission changes in 30 days. Ensure changes follow approval process."
     return 2, f"Permission changes within normal range ({changes} in 30 days)."

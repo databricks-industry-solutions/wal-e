@@ -35,6 +35,42 @@ def _is_llm_entity(entity: dict, endpoint_name: str, task: str) -> bool:
     return endpoint_name.lower().startswith("databricks-")
 
 
+def _is_foundation_system_entity(entity: dict, endpoint_name: str, endpoint_type: str) -> bool:
+    """True for Databricks-managed Foundation Model API (pay-per-token) system endpoints.
+
+    These are provisioned by enabling the Foundation Model APIs, not built by the
+    customer: guardrails, inference tables, and provisioned throughput are governed
+    on the gateway/route that fronts production traffic, not on each system endpoint.
+    Customer-configured external-model endpoints (with their own provider keys) are
+    NOT treated as system endpoints — those remain the customer's responsibility.
+    """
+    if entity.get("external_model"):
+        return False
+    if str(endpoint_type).upper() == "FOUNDATION_MODEL_API":
+        return True
+    if str(entity.get("type", "")).upper() == "FOUNDATION_MODEL":
+        return True
+    fm = entity.get("foundation_model")
+    if isinstance(fm, dict) and str(fm.get("name", "")).lower().startswith("system.ai."):
+        return True
+    # Fallback to the pay-per-token system endpoint naming convention.
+    return endpoint_name.lower().startswith("databricks-")
+
+
+def _uc_model_name(entity: dict) -> str | None:
+    """Return the UC model name a served entity references, if it is a UC model."""
+    if entity.get("external_model") or entity.get("foundation_model"):
+        return None
+    entity_type = str(entity.get("type", "")).upper()
+    name = entity.get("entity_name") or entity.get("model_name")
+    if not isinstance(name, str) or not name:
+        return None
+    # A three-level name (catalog.schema.model) is a UC-registered model.
+    if entity_type == "UC_MODEL" or name.count(".") == 2:
+        return name
+    return None
+
+
 def _scan_for_plaintext_secret(obj: Any) -> bool:
     """Recursively check whether any *_plaintext key carries a non-empty value."""
     if isinstance(obj, dict):
@@ -78,6 +114,7 @@ class AICollector(BaseCollector):
             "serving_endpoints": [],
             "endpoint_count": 0,
             "llm_endpoint_count": 0,
+            "foundation_model_system_endpoint_count": 0,
             "external_model_endpoint_count": 0,
             "endpoints_with_guardrails": 0,
             "endpoints_with_inference_tables": 0,
@@ -85,6 +122,7 @@ class AICollector(BaseCollector):
             "prod_llm_endpoint_count": 0,
             "prod_llm_provisioned_throughput": 0,
             "prod_llm_scale_to_zero": 0,
+            "uc_served_model_count": 0,
             "vs_endpoint_count": 0,
             "vs_index_count": 0,
             "vs_delta_sync_indexes": 0,
@@ -109,15 +147,19 @@ class AICollector(BaseCollector):
         endpoints = data.get("endpoints", []) or []
         findings["endpoint_count"] = len(endpoints)
 
+        uc_served_models: set[str] = set()
         for ep in endpoints[:_ENDPOINT_DETAIL_CAP]:
             if not isinstance(ep, dict):
                 continue
             name = ep.get("name", "")
             detail, detail_ok = self.run_api_call(f"/api/2.0/serving-endpoints/{name}")
             ep_data = detail if (detail_ok and detail) else ep
-            self._parse_endpoint(name, ep_data, findings)
+            self._parse_endpoint(name, ep_data, findings, uc_served_models)
+        findings["uc_served_model_count"] = len(uc_served_models)
 
-    def _parse_endpoint(self, name: str, ep: dict, findings: dict[str, Any]) -> None:
+    def _parse_endpoint(
+        self, name: str, ep: dict, findings: dict[str, Any], uc_served_models: set[str]
+    ) -> None:
         gateway = ep.get("ai_gateway") or {}
         guardrails = gateway.get("guardrails") or ep.get("guardrails") or {}
         inference_cfg = (
@@ -126,10 +168,12 @@ class AICollector(BaseCollector):
             or (ep.get("config") or {}).get("auto_capture_config")
             or {}
         )
+        endpoint_type = ep.get("endpoint_type") or ""
         config = ep.get("config") or {}
         served = config.get("served_entities") or ep.get("served_entities") or []
 
         is_llm = False
+        is_foundation_system = False
         has_pt = False
         has_stz = False
         has_plaintext = False
@@ -139,6 +183,11 @@ class AICollector(BaseCollector):
             task = str(entity.get("task") or (entity.get("external_model") or {}).get("task") or "")
             if _is_llm_entity(entity, name, task):
                 is_llm = True
+            if _is_foundation_system_entity(entity, name, endpoint_type):
+                is_foundation_system = True
+            uc_name = _uc_model_name(entity)
+            if uc_name:
+                uc_served_models.add(uc_name)
             if entity.get("external_model"):
                 findings["external_model_endpoint_count"] += 1
                 if _scan_for_plaintext_secret(entity.get("external_model")):
@@ -149,9 +198,15 @@ class AICollector(BaseCollector):
             if entity.get("scale_to_zero_enabled") in (True, "true"):
                 has_stz = True
 
+        # A customer LLM endpoint is one the customer owns and must govern —
+        # i.e. an LLM that is not a Databricks-managed foundation-model system endpoint.
+        is_customer_llm = is_llm and not is_foundation_system
+
         summary = {
             "name": name,
             "is_llm": is_llm,
+            "is_foundation_system": is_foundation_system,
+            "is_customer_llm": is_customer_llm,
             "has_strong_guardrails": _has_strong_guardrails(guardrails),
             "inference_table_enabled": bool(inference_cfg.get("enabled")),
             "has_plaintext_key": has_plaintext,
@@ -161,7 +216,14 @@ class AICollector(BaseCollector):
         }
         findings["serving_endpoints"].append(summary)
 
-        if is_llm:
+        if is_foundation_system:
+            findings["foundation_model_system_endpoint_count"] += 1
+
+        # Only customer-owned LLM endpoints are scored for guardrails, payload
+        # logging, and provisioned throughput. Databricks-managed foundation-model
+        # system endpoints are governed at the gateway/route level, so counting
+        # each one as an ungoverned gap produces false negatives.
+        if is_customer_llm:
             findings["llm_endpoint_count"] += 1
             if summary["has_strong_guardrails"]:
                 findings["endpoints_with_guardrails"] += 1

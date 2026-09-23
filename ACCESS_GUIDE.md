@@ -62,7 +62,7 @@ WAL-E is designed so the **customer runs everything on their own system**. The S
 | **Compute** | Cluster names & states, SQL warehouse configs, cluster policies, instance pools | Running cluster count, warehouse sizes |
 | **Security** | Workspace settings (DBFS browser, export, token lifetime), IP access lists | Config flags (true/false) |
 | **Operations** | Job names, pipeline states, serving endpoints, git repos, init scripts, secret scope names | Job count, pipeline failure states |
-| **AI / GenAI** | Model serving endpoint config (AI Gateway, guardrails, inference tables, provisioned throughput), Vector Search endpoints & indexes, UC-registered vs workspace-registry models, Genie space count | LLM endpoint count, guardrail coverage |
+| **AI / GenAI** | Model serving endpoint config (AI Gateway, guardrails, inference tables, provisioned throughput), Vector Search endpoints & indexes, UC-registered vs workspace-registry models (incl. UC models detected via serving endpoints), Genie space count | Customer LLM endpoint count vs Databricks-managed foundation-model endpoints, guardrail coverage |
 | **Workspace** | Root-level directory listing (names & types only) | Folder names, notebook counts |
 
 ### What is NOT Collected
