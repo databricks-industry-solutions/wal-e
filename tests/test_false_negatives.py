@@ -10,6 +10,7 @@ from wal_e.framework.scoring import (
     _score_gov_006,
     _score_gov_009,
     _score_gov_014,
+    _score_sec_003,
     _score_sec_011,
 )
 from wal_e.reporters.csv_report import CSVReporter
@@ -35,6 +36,43 @@ def test_managed_tables_full_when_no_external_locations():
     data = {"GovernanceCollector": {"external_location_count": 0, "catalog_count": 10}}
     score, _ = _score_gov_014(data)
     assert score == 2
+
+
+def test_network_security_no_ip_acls_is_unverifiable_not_a_gap():
+    # No workspace IP ACLs on Azure: primary control is account-level Private Link.
+    data = {"_cloud_provider": "azure", "SecurityCollector": {"ip_access_list_count": 0}}
+    score, notes = _score_sec_003(data)
+    assert score == 1
+    assert not _is_verified(score, notes)
+    assert "account console" in notes.lower()
+    assert "private link" in notes.lower()
+
+
+def test_network_security_ip_acls_enabled_is_verified_full():
+    data = {
+        "_cloud_provider": "azure",
+        "SecurityCollector": {
+            "ip_access_lists": [{"label": "corp", "enabled": True}],
+            "security_settings": {"enableIpAccessLists": "true"},
+        },
+    }
+    score, notes = _score_sec_003(data)
+    assert score == 2
+    assert _is_verified(score, notes)
+
+
+def test_network_security_ip_acls_present_but_disabled_is_real_partial():
+    data = {
+        "_cloud_provider": "aws",
+        "SecurityCollector": {
+            "ip_access_lists": [{"label": "corp", "enabled": False}],
+            "security_settings": {"enableIpAccessLists": "false"},
+        },
+    }
+    score, notes = _score_sec_003(data)
+    assert score == 1
+    # This IS a verifiable, actionable finding (lists exist but not enabled).
+    assert _is_verified(score, notes)
 
 
 def test_vpc_unverifiable_not_zero():

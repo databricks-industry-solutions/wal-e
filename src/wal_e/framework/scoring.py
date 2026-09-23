@@ -750,6 +750,7 @@ def _score_sec_002(data: dict) -> tuple[int, str]:
 
 def _score_sec_003(data: dict) -> tuple[int, str]:
     """Network security."""
+    cloud = _cloud(data)
     sec = _get(data, "SecurityCollector") or {}
     ip_lists = sec.get("ip_access_lists", []) or []
     sec_settings = sec.get("security_settings", {}) or {}
@@ -759,7 +760,20 @@ def _score_sec_003(data: dict) -> tuple[int, str]:
         return 2, f"IP access lists configured and enabled for network security ({ipl_count} lists)."
     if ipl_count > 0:
         return 1, f"IP access lists exist ({ipl_count}) but enableIpAccessLists not enabled. Enable in workspace settings."
-    return 1, "IP access lists not detected. Configure network restrictions."
+    # No workspace IP access lists. On every cloud the primary network control
+    # (Private Link / VNet injection / Private Service Connect + NCC) is an
+    # account/deployment-level setting the workspace API does not expose, so the
+    # absence of workspace IP ACLs is not a confirmed gap — flag as unverifiable.
+    net = {
+        "aws": "AWS PrivateLink with a customer-managed VPC",
+        "azure": "Azure Private Link with VNet injection",
+        "gcp": "Private Service Connect with a customer-managed VPC",
+    }.get(cloud, "Private Link / customer-managed networking")
+    return 1, (
+        f"Workspace IP access lists are not configured, but network isolation via {net} is "
+        f"account-level and not verifiable from the workspace API ({cloud.upper()}); confirm in "
+        "the account console. If no network-layer isolation is in place, add IP access lists."
+    )
 
 
 def _score_sec_004(data: dict) -> tuple[int, str]:
