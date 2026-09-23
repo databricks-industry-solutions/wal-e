@@ -704,13 +704,18 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
 
   Role                         Coverage
-  {C.GREEN}Account admin (recommended){C.RESET} .. 100% — all pillars; unlocks --deep + account-level SSO/SCIM/network/audit
+  {C.GREEN}Account admin (recommended){C.RESET} .. ~95% + unlocks --deep system tables; account-level controls stay UNVERIFIABLE (see note)
   {C.GREEN}Metastore admin{C.RESET} .............. ~95% of best practices scored
   {C.YELLOW}Workspace admin{C.RESET} .............. ~80% of best practices scored
   Regular user ................. ~40% of best practices scored
 
-  {C.DIM}Running as an account admin gives the truest, all-pillar picture. Lower roles
-  leave account-level controls (SSO/SCIM, network, audit) unverifiable.{C.RESET}
+  {C.DIM}Account admin is recommended because it enables the --deep system-tables scan
+  (billing, audit events, query history). It does NOT let WAL-E confirm account-level
+  controls — customer-managed VPC/VNet, Private Link/PSC, NCC, account SSO/SCIM, and
+  audit log delivery live in the accounts-console API, which WAL-E's workspace-only
+  collection never calls. WAL-E reports those as UNVERIFIABLE until the dedicated
+  account-level assessment path (currently in testing) lands; Azure VNet injection
+  additionally needs an ARM check.{C.RESET}
 
 {C.BOLD}API CALLS MADE (ALL READ-ONLY){C.RESET}
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
