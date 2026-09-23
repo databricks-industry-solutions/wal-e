@@ -87,15 +87,15 @@ The assessment’s scoring model is the **Well-Architected Lakehouse Framework**
 
 > **Full guide:** See [ACCESS_GUIDE.md](ACCESS_GUIDE.md) for the complete self-service setup guide, permissions reference, and customer-facing instructions.
 
-WAL-E needs **read-only** access to the workspace. It makes **30 HTTP GET API call types** (plus per-endpoint detail calls for serving and Vector Search) and **zero write calls**.
+WAL-E needs **read-only** access to the workspace. It makes **30 HTTP GET API call types** (plus per-endpoint detail calls for serving and Vector Search, and 6 optional account-API call types when `--account-profile` is supplied) and **zero write calls**.
 
 ### Permissions by Assessment Depth
 
-> **Run as an account admin (highly recommended).** Account-admin access, together with the `--deep` system-tables scan, produces the most complete and accurate assessment across all seven pillars. It is also what lets you confirm the account-level controls — SSO, SCIM, network isolation, and audit logging — that a workspace-only role can only report as *unverifiable*.
+> **Run as an account admin (highly recommended).** Account-admin access, together with the `--deep` system-tables scan, produces the most complete and accurate assessment across all seven pillars. To actually *confirm* account-level controls (network isolation, account SCIM, audit log delivery) — which a workspace-only role can only report as *unverifiable* — also pass `--account-profile <profile>` (a CLI profile for the accounts-console host that carries `account_id`). Without `--account-profile`, WAL-E queries only the workspace API and these controls stay unverifiable. On Azure, VNet injection is an ARM property and still requires an ARM check even with `--account-profile`.
 
 | Role                              | Access Level                                 | What You Get                                                                                        | Coverage |
 | --------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------- | :------: |
-| **Account admin** _(recommended)_ | Workspace + metastore admin **+ system tables** | Everything below, plus billing, audit, query history, and confirmation of account-level SSO/SCIM/network controls | **100%** |
+| **Account admin** _(recommended)_ | Workspace + metastore admin **+ system tables** + `--account-profile` | Everything below, plus billing, audit, query history, and confirmation of account-level network isolation (Private Link/NCC/customer-managed VPC), account SCIM, and log delivery | **100%** |
 | Metastore admin                   | Workspace admin + metastore admin            | Above + all catalogs, storage credentials, external locations                                       | **~95%** |
 | Workspace admin                   | Workspace admin                              | All clusters, warehouses, security config, all jobs                                                 | **~80%** |
 | User                              | Regular user                                 | Own clusters, permitted catalogs, own jobs                                                          |   ~40%   |
@@ -309,6 +309,10 @@ The standard assessment uses read-only REST API calls. For a deeper analysis, WA
 ```bash
 # Deep scan requires a running SQL warehouse and SELECT grants on system.* schemas
 wal-e assess --profile wal-assessment --deep --warehouse-id <YOUR_WAREHOUSE_ID>
+
+# Add --account-profile to confirm account-level network isolation, account SCIM,
+# and log delivery (needs a CLI profile for the accounts-console host with account_id)
+wal-e assess --profile wal-assessment --deep --warehouse-id <ID> --account-profile wal-account
 ```
 
 Deep scan adds **11 additional best practices** (145 total) covering:

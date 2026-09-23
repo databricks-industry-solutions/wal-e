@@ -64,6 +64,7 @@ WAL-E is designed so the **customer runs everything on their own system**. The S
 | **Operations** | Job names, pipeline states, serving endpoints, git repos, init scripts, secret scope names | Job count, pipeline failure states |
 | **AI / GenAI** | Model serving endpoint config (AI Gateway, guardrails, inference tables, provisioned throughput), Vector Search endpoints & indexes, UC-registered vs workspace-registry models (incl. UC models detected via serving endpoints), Genie space count | Customer LLM endpoint count vs Databricks-managed foundation-model endpoints, guardrail coverage |
 | **Workspace** | Root-level directory listing (names & types only) | Folder names, notebook counts |
+| **Account** _(optional, `--account-profile`)_ | Account-console API: workspaces, networks, private-access settings, network-connectivity configs, account SCIM groups, log delivery | Confirmed network isolation (Private Link/NCC/customer-managed VPC), account SCIM, audit log delivery |
 
 ### What is NOT Collected
 

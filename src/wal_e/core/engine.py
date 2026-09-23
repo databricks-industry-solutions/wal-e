@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from wal_e.collectors import (
+    AccountCollector,
     AICollector,
     AuthCollector,
     ComputeCollector,
@@ -52,6 +53,16 @@ class AssessmentEngine:
                     config.profile_name,
                     config.warehouse_id,
                     cloud_provider=config.cloud_provider,
+                )
+            )
+        # Account-level confirmation of network/SCIM/audit controls that the
+        # workspace API cannot see. Only runs when an account profile is given.
+        if config.account_profile:
+            self._collectors.append(
+                AccountCollector(
+                    config.account_profile,
+                    config.account_id,
+                    workspace_host=config.workspace_host,
                 )
             )
 

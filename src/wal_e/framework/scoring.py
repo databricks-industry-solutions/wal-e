@@ -760,6 +760,15 @@ def _score_sec_003(data: dict) -> tuple[int, str]:
         return 2, f"IP access lists configured and enabled for network security ({ipl_count} lists)."
     if ipl_count > 0:
         return 1, f"IP access lists exist ({ipl_count}) but enableIpAccessLists not enabled. Enable in workspace settings."
+    # Account API confirms network-layer isolation the workspace API cannot see.
+    acct = _acct(data)
+    if acct.get("workspace_vpc_injection") or acct.get("workspace_private_link"):
+        return 2, "Network isolation confirmed via account API (customer-managed network / Private Link) for this workspace."
+    if acct.get("private_access_count", 0) or acct.get("ncc_count", 0):
+        return 2, (
+            f"Account-level network controls confirmed: {acct.get('private_access_count', 0)} private-access "
+            f"setting(s), {acct.get('ncc_count', 0)} network-connectivity config(s)."
+        )
     # No workspace IP access lists. On every cloud the primary network control
     # (Private Link / VNet injection / Private Service Connect + NCC) is an
     # account/deployment-level setting the workspace API does not expose, so the
@@ -917,6 +926,28 @@ def _score_sec_011(data: dict) -> tuple[int, str]:
         net = "customer-managed VPC with Private Service Connect"
     else:
         net = "customer-managed VPC with Private Link"
+    # Account API confirms isolation directly when an account profile is provided.
+    acct = _acct(data)
+    if acct:
+        if acct.get("workspace_vpc_injection"):
+            return 2, f"Customer-managed network confirmed via account API for this workspace ({cloud.upper()})."
+        if acct.get("workspace_private_link") or acct.get("private_access_count", 0) or acct.get("ncc_count", 0):
+            return 2, (
+                f"Network isolation confirmed via account API ({net}, {cloud.upper()}): "
+                f"{acct.get('private_access_count', 0)} private-access setting(s), "
+                f"{acct.get('ncc_count', 0)} network-connectivity config(s)."
+            )
+        if acct.get("workspace_matched"):
+            if cloud == "azure":
+                return 1, (
+                    "Account API shows no Databricks-managed network isolation for this workspace, but Azure "
+                    "VNet injection is an ARM property and is not verifiable from the Databricks account API; "
+                    "confirm the workspace's customVirtualNetworkId in Azure Resource Manager before treating this as a gap."
+                )
+            return 1, (
+                f"Account API confirms no customer-managed network / Private Link on this workspace ({cloud.upper()}). "
+                f"Deploy into a customer-managed VPC and enable Private Link for production isolation."
+            )
     if ipl_on:
         return 1, f"IP access lists enabled ({cloud.upper()}). Network isolation ({net}) is configured at the account/deployment level and is not verifiable from the workspace API; confirm in the account console."
     return 1, f"Network isolation ({net}) is configured at the account/deployment level and is not verifiable from the workspace API ({cloud.upper()}); confirm in the account console rather than treating this as a gap."
@@ -1648,6 +1679,12 @@ def _score_cost_020(data: dict) -> tuple[int, str]:
 def _st(data: dict) -> dict:
     """Get SystemTablesCollector findings, or empty dict if not available."""
     return _get(data, "SystemTablesCollector") or {}
+
+
+def _acct(data: dict) -> dict:
+    """Get AccountCollector findings if the account API was queried successfully."""
+    acct = _get(data, "AccountCollector") or {}
+    return acct if acct.get("available") else {}
 
 
 def _st_available(st: dict, section: str) -> bool:
