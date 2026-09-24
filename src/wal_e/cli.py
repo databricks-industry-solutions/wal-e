@@ -789,7 +789,8 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
   job success rates, and security audit events.
 
   {C.DIM}System tables are account-global, so deep-scan queries are scoped to the
-  assessed workspace_id (resolved from the host or system.access.workspaces_latest).
+  assessed workspace_id (resolved vanity-URL-proof from the X-Databricks-Org-Id
+  API header, with the host and system.access.workspaces_latest as fallbacks).
   A run against one workspace does not aggregate telemetry from other workspaces.{C.RESET}
 
   {C.BOLD}Requires:{C.RESET}

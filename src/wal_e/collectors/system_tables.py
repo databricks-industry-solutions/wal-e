@@ -12,6 +12,8 @@ import json
 import re
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from typing import Any
 
 from wal_e.collectors.base import AuditEntry, BaseCollector
@@ -79,6 +81,13 @@ class SystemTablesCollector(BaseCollector):
         if m:
             return m.group(1)
 
+        # Vanity-proof, cross-cloud: the workspace id is returned as the
+        # X-Databricks-Org-Id response header on any workspace API call,
+        # independent of the (possibly aliased) hostname.
+        wid = self._resolve_via_org_id_header()
+        if wid:
+            return wid
+
         # Only match a well-formed hostname; never interpolate arbitrary text.
         if not bare or not re.fullmatch(r"[a-z0-9.\-]+", bare):
             return ""
@@ -92,6 +101,76 @@ class SystemTablesCollector(BaseCollector):
             wid = str(rows[0].get("workspace_id") or "").strip()
             if wid.isdigit():
                 return wid
+        return ""
+
+    def _mint_token(self) -> str:
+        """Return a bearer token for the profile via `databricks auth token`.
+
+        SECURITY: this call is intentionally NOT routed through
+        ``run_cli_command`` (which stores raw stdout in the audit trail) so the
+        token never lands in the audit report. The token is used in-process only
+        and never logged.
+        """
+        try:
+            result = subprocess.run(
+                ["databricks", "auth", "token", "--profile", self.profile_name],
+                capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        if result.returncode != 0 or not result.stdout:
+            return ""
+        try:
+            return str(json.loads(result.stdout).get("access_token", "") or "")
+        except json.JSONDecodeError:
+            return ""
+
+    def _audit_http(self, start: float, success: bool, note: str) -> None:
+        """Record the org-id resolution call. ``note`` never contains the token."""
+        self.audit_entries.append(AuditEntry(
+            command=["HTTP GET", "/api/2.0/preview/scim/v2/Me (X-Databricks-Org-Id)"],
+            raw_output=note,
+            duration_seconds=time.perf_counter() - start,
+            success=success,
+            error=None if success else note,
+        ))
+
+    def _resolve_via_org_id_header(self) -> str:
+        """Resolve workspace id from the X-Databricks-Org-Id response header.
+
+        Works on all clouds and is immune to vanity/custom workspace URLs. Uses
+        stdlib urllib so the token is an in-memory request header, never a CLI
+        argument (keeps it out of process listings and shell history).
+        """
+        host = (self.workspace_host or "").strip().rstrip("/")
+        if not host:
+            return ""
+        if not host.startswith(("http://", "https://")):
+            host = "https://" + host
+
+        start = time.perf_counter()
+        token = self._mint_token()
+        if not token:
+            self._audit_http(start, False, "token mint failed")
+            return ""
+
+        req = urllib.request.Request(
+            f"{host}/api/2.0/preview/scim/v2/Me",
+            headers={"Authorization": f"Bearer {token}"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                org_id = (resp.headers.get("X-Databricks-Org-Id", "") or "").strip()
+        except (urllib.error.URLError, OSError, ValueError) as e:
+            self._audit_http(start, False, type(e).__name__)
+            return ""
+
+        if org_id.isdigit():
+            self._audit_http(start, True, f"workspace_id={org_id}")
+            return org_id
+        self._audit_http(start, False, "no org id header")
         return ""
 
     def _ws_filter(self, column: str = "workspace_id") -> str:
