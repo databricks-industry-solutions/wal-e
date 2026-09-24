@@ -31,6 +31,15 @@ wal-e report --input ./my-assessment --format pptx html csv
 wal-e setup --guide
 ```
 
+## Releasing
+
+Releases are automated by `.github/workflows/release.yml`. To cut a release:
+
+1. Bump the version in **both** `pyproject.toml` and `src/wal_e/__init__.py` (they must match) in a PR.
+2. Merge the PR to `main`.
+
+On merge, the workflow tags `v<version>` and publishes a GitHub release with generated notes. If the tag already exists it no-ops. Tags are never moved — a new release always requires a new version. There is no separate test/CI workflow yet; the release job runs `pytest` before publishing.
+
 ## Architecture
 
 | Component | Path | Description |
