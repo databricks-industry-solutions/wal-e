@@ -15,6 +15,8 @@ WAL-E auto-detects the cloud provider (AWS / Azure / GCP) from the workspace URL
 wal-e assess --profile wal-assessment --output ./my-assessment --format all
 
 # Deep scan (adds system tables: billing, compute, query, audit, lakeflow jobs)
+# System tables are account-global; deep-scan queries are scoped to the assessed
+# workspace_id (resolved from the Azure host or system.access.workspaces_latest).
 # Also quantifies auto-termination $ savings for interactive clusters (10/30/60-min policies)
 wal-e assess --profile wal-assessment --deep --warehouse-id <ID> --format all
 

@@ -361,6 +361,8 @@ GRANT SELECT ON SCHEMA system.lakeflow TO `your-admin-user@company.com`;
 
 **Note:** System table access is **optional**. WAL-E produces a complete assessment using only the REST API calls above.
 
+**Workspace scoping:** System tables are account-global. WAL-E resolves the assessed workspace's `workspace_id` (from the Azure host, or via `system.access.workspaces_latest` for AWS/GCP — covered by the `system.access` grant above) and filters every deep-scan query by it, so a run against one workspace does not aggregate telemetry from other workspaces in the account.
+
 ---
 
 ## 8. Security & Privacy Assurances

@@ -9,6 +9,7 @@ SELECT grants on system.* schemas.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 from typing import Any
@@ -48,10 +49,62 @@ class SystemTablesCollector(BaseCollector):
         profile_name: str = "DEFAULT",
         warehouse_id: str = "",
         cloud_provider: str = "unknown",
+        workspace_host: str = "",
     ) -> None:
         super().__init__(profile_name)
         self.warehouse_id = warehouse_id
         self.cloud_provider = cloud_provider
+        self.workspace_host = workspace_host
+        # Resolved id of the assessed workspace. System tables are account-global,
+        # so every query is scoped to this id to avoid aggregating telemetry from
+        # other workspaces in the same account. Empty means scoping is unavailable.
+        self.workspace_id = ""
+
+    def _resolve_workspace_id(self) -> str:
+        """Resolve the assessed workspace's numeric id.
+
+        Azure deployment hostnames embed the id (``adb-<id>.<n>.azuredatabricks.net``).
+        For AWS/GCP the host carries no id, so fall back to a lookup in
+        ``system.access.workspaces_latest`` matched on ``workspace_url``.
+        """
+        bare = (
+            (self.workspace_host or "")
+            .strip()
+            .lower()
+            .replace("https://", "")
+            .replace("http://", "")
+            .rstrip("/")
+        )
+        m = re.match(r"adb-(\d+)\.", bare)
+        if m:
+            return m.group(1)
+
+        # Only match a well-formed hostname; never interpolate arbitrary text.
+        if not bare or not re.fullmatch(r"[a-z0-9.\-]+", bare):
+            return ""
+        rows, ok = self._run_sql(
+            "SELECT workspace_id FROM system.access.workspaces_latest "
+            "WHERE lower(replace(replace(workspace_url, 'https://', ''), 'http://', '')) "
+            f"= '{bare}' LIMIT 1",
+            "resolve-workspace-id",
+        )
+        if ok and rows:
+            wid = str(rows[0].get("workspace_id") or "").strip()
+            if wid.isdigit():
+                return wid
+        return ""
+
+    def _ws_filter(self, column: str = "workspace_id") -> str:
+        """SQL predicate scoping a query to the assessed workspace.
+
+        Returns an empty string when the workspace id could not be resolved, so
+        callers degrade to the previous account-wide behavior (flagged in findings)
+        rather than failing. Cast to STRING to match both STRING and BIGINT
+        ``workspace_id`` columns across system tables.
+        """
+        if not self.workspace_id:
+            return ""
+        return f" AND CAST({column} AS STRING) = '{self.workspace_id}'"
 
     @staticmethod
     def _parse_rows(resp: dict[str, Any]) -> list[dict[str, Any]]:
@@ -187,6 +240,12 @@ class SystemTablesCollector(BaseCollector):
             return findings
         findings["available"] = True
 
+        # System tables are account-global. Resolve the assessed workspace so every
+        # query below is scoped to it and does not sum other workspaces' telemetry.
+        self.workspace_id = self._resolve_workspace_id()
+        findings["workspace_id"] = self.workspace_id
+        findings["workspace_scoped"] = bool(self.workspace_id)
+
         findings["billing"] = self._collect_billing()
         findings["compute_history"] = self._collect_compute_history()
         findings["autoterm_savings"] = self._collect_autoterm_savings()
@@ -203,12 +262,12 @@ class SystemTablesCollector(BaseCollector):
         result: dict[str, Any] = {"available": False}
 
         # Total DBU spend last 30 days by SKU
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT sku_name,
                    SUM(usage_quantity) AS total_dbus,
                    COUNT(DISTINCT workspace_id) AS workspace_count
             FROM system.billing.usage
-            WHERE usage_date >= current_date() - INTERVAL 30 DAYS
+            WHERE usage_date >= current_date() - INTERVAL 30 DAYS{self._ws_filter()}
             GROUP BY sku_name
             ORDER BY total_dbus DESC
             LIMIT 20
@@ -219,11 +278,11 @@ class SystemTablesCollector(BaseCollector):
             result["total_dbus_30d"] = sum(float(r.get("total_dbus") or 0) for r in rows)
 
         # Daily spend trend (last 30 days)
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT usage_date,
                    SUM(usage_quantity) AS daily_dbus
             FROM system.billing.usage
-            WHERE usage_date >= current_date() - INTERVAL 30 DAYS
+            WHERE usage_date >= current_date() - INTERVAL 30 DAYS{self._ws_filter()}
             GROUP BY usage_date
             ORDER BY usage_date
         """, "billing-daily-trend-30d")
@@ -237,12 +296,12 @@ class SystemTablesCollector(BaseCollector):
                     result["trend_pct_change"] = round(((last_week - first_week) / first_week) * 100, 1)
 
         # Top 10 most expensive clusters
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT usage_metadata.cluster_id AS cluster_id,
                    SUM(usage_quantity) AS total_dbus
             FROM system.billing.usage
             WHERE usage_date >= current_date() - INTERVAL 30 DAYS
-              AND usage_metadata.cluster_id IS NOT NULL
+              AND usage_metadata.cluster_id IS NOT NULL{self._ws_filter()}
             GROUP BY usage_metadata.cluster_id
             ORDER BY total_dbus DESC
             LIMIT 10
@@ -261,20 +320,21 @@ class SystemTablesCollector(BaseCollector):
         # Cluster uptime derived from per-minute node telemetry. system.compute.clusters
         # is a config (SCD2) dimension with no runtime state, so running hours come from
         # node_timeline driver rows (one per running minute per cluster).
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             WITH uptime AS (
                 SELECT cluster_id,
                        COUNT(*) / 60.0 AS running_hours,
                        AVG(cpu_user_percent + cpu_system_percent) AS avg_cpu_pct
                 FROM system.compute.node_timeline
                 WHERE start_time >= current_date() - INTERVAL 30 DAYS
-                  AND driver = true
+                  AND driver = true{self._ws_filter()}
                 GROUP BY cluster_id
                 HAVING running_hours > 0
             ),
             names AS (
                 SELECT cluster_id, ANY_VALUE(cluster_name) AS cluster_name
                 FROM system.compute.clusters
+                WHERE 1 = 1{self._ws_filter()}
                 GROUP BY cluster_id
             )
             SELECT u.cluster_id,
@@ -294,20 +354,21 @@ class SystemTablesCollector(BaseCollector):
 
         # Idle waste: clusters that ran for meaningful time but stayed near-idle
         # (average CPU under 10%), signalling over-provisioning or missing auto-stop.
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             WITH uptime AS (
                 SELECT cluster_id,
                        COUNT(*) / 60.0 AS running_hours,
                        AVG(cpu_user_percent + cpu_system_percent) AS avg_cpu_pct
                 FROM system.compute.node_timeline
                 WHERE start_time >= current_date() - INTERVAL 30 DAYS
-                  AND driver = true
+                  AND driver = true{self._ws_filter()}
                 GROUP BY cluster_id
                 HAVING running_hours > 1 AND avg_cpu_pct < 10
             ),
             names AS (
                 SELECT cluster_id, ANY_VALUE(cluster_name) AS cluster_name
                 FROM system.compute.clusters
+                WHERE 1 = 1{self._ws_filter()}
                 GROUP BY cluster_id
             )
             SELECT u.cluster_id,
@@ -363,7 +424,7 @@ class SystemTablesCollector(BaseCollector):
                     SELECT cluster_id, cluster_name, cluster_source, auto_termination_minutes,
                            ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY change_time DESC) AS rn
                     FROM system.compute.clusters
-                    WHERE cluster_source IN ('UI', 'API')
+                    WHERE cluster_source IN ('UI', 'API'){self._ws_filter()}
                 ) WHERE rn = 1
                   AND (auto_termination_minutes IS NULL OR auto_termination_minutes = 0)
             ),
@@ -372,14 +433,14 @@ class SystemTablesCollector(BaseCollector):
                        MAX(CASE WHEN COALESCE(nt.cpu_user_percent,0)+COALESCE(nt.cpu_system_percent,0)+COALESCE(nt.cpu_wait_percent,0) > 5 THEN 1 ELSE 0 END) AS is_active
                 FROM system.compute.node_timeline nt
                 JOIN target_clusters tc ON nt.cluster_id = tc.cluster_id
-                WHERE nt.start_time >= current_date() - INTERVAL {window} DAYS
+                WHERE nt.start_time >= current_date() - INTERVAL {window} DAYS{self._ws_filter("nt.workspace_id")}
                 GROUP BY nt.cluster_id, nt.start_time
             ),
             driver_sessions AS (
                 SELECT DISTINCT nt.cluster_id, nt.instance_id, nt.start_time AS minute
                 FROM system.compute.node_timeline nt
                 JOIN target_clusters tc ON nt.cluster_id = tc.cluster_id
-                WHERE nt.driver = true AND nt.start_time >= current_date() - INTERVAL {window} DAYS
+                WHERE nt.driver = true AND nt.start_time >= current_date() - INTERVAL {window} DAYS{self._ws_filter("nt.workspace_id")}
             ),
             session_activity AS (
                 SELECT ds.cluster_id, ds.instance_id, ds.minute, COALESCE(an.is_active, 0) AS is_active
@@ -410,7 +471,7 @@ class SystemTablesCollector(BaseCollector):
                 FROM system.billing.usage
                 WHERE usage_date >= current_date() - INTERVAL {window} DAYS
                   AND billing_origin_product = 'ALL_PURPOSE' AND usage_unit = 'DBU'
-                  AND usage_metadata.cluster_id IS NOT NULL AND record_type = 'ORIGINAL'
+                  AND usage_metadata.cluster_id IS NOT NULL AND record_type = 'ORIGINAL'{self._ws_filter()}
                 GROUP BY usage_metadata.cluster_id
             ),
             cluster_sku AS (
@@ -420,7 +481,7 @@ class SystemTablesCollector(BaseCollector):
                     FROM system.billing.usage
                     WHERE usage_date >= current_date() - INTERVAL {window} DAYS
                       AND billing_origin_product = 'ALL_PURPOSE' AND usage_unit = 'DBU'
-                      AND usage_metadata.cluster_id IS NOT NULL AND record_type = 'ORIGINAL'
+                      AND usage_metadata.cluster_id IS NOT NULL AND record_type = 'ORIGINAL'{self._ws_filter()}
                     GROUP BY usage_metadata.cluster_id, sku_name
                 ) WHERE rn = 1
             )
@@ -498,7 +559,7 @@ class SystemTablesCollector(BaseCollector):
         # Query stats last 30 days. system.query.history uses execution_status
         # (FINISHED/FAILED/CANCELED) and total_duration_ms; the warehouse id lives
         # in the compute struct.
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT COUNT(*) AS total_queries,
                    SUM(CASE WHEN execution_status = 'FINISHED' THEN 1 ELSE 0 END) AS succeeded,
                    SUM(CASE WHEN execution_status = 'FAILED' THEN 1 ELSE 0 END) AS failed,
@@ -507,7 +568,7 @@ class SystemTablesCollector(BaseCollector):
                    PERCENTILE(total_duration_ms, 0.95) AS p95_duration_ms,
                    PERCENTILE(total_duration_ms, 0.99) AS p99_duration_ms
             FROM system.query.history
-            WHERE start_time >= current_date() - INTERVAL 30 DAYS
+            WHERE start_time >= current_date() - INTERVAL 30 DAYS{self._ws_filter()}
         """, "query-stats-30d")
         if ok and rows and rows[0].get("total_queries"):
             result["available"] = True
@@ -522,25 +583,25 @@ class SystemTablesCollector(BaseCollector):
             result["p99_duration_ms"] = float(r.get("p99_duration_ms") or 0)
 
         # Slow queries (>5 min)
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT COUNT(*) AS slow_query_count
             FROM system.query.history
             WHERE start_time >= current_date() - INTERVAL 30 DAYS
               AND execution_status = 'FINISHED'
-              AND total_duration_ms > 300000
+              AND total_duration_ms > 300000{self._ws_filter()}
         """, "query-slow-count-30d")
         if ok and rows:
             result["slow_queries_30d"] = int(rows[0].get("slow_query_count") or 0)
 
         # Warehouse utilization
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT compute.warehouse_id AS warehouse_id,
                    COUNT(*) AS query_count,
                    AVG(total_duration_ms) AS avg_duration_ms,
                    SUM(CASE WHEN execution_status = 'FAILED' THEN 1 ELSE 0 END) AS failures
             FROM system.query.history
             WHERE start_time >= current_date() - INTERVAL 30 DAYS
-              AND compute.warehouse_id IS NOT NULL
+              AND compute.warehouse_id IS NOT NULL{self._ws_filter()}
             GROUP BY compute.warehouse_id
             ORDER BY query_count DESC
             LIMIT 10
@@ -557,13 +618,13 @@ class SystemTablesCollector(BaseCollector):
         result: dict[str, Any] = {"available": False}
 
         # Job run stats last 30 days
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT COUNT(*) AS total_runs,
                    SUM(CASE WHEN result_state = 'SUCCESS' THEN 1 ELSE 0 END) AS succeeded,
                    SUM(CASE WHEN result_state IN ('FAILED', 'TIMEDOUT', 'INTERNAL_ERROR') THEN 1 ELSE 0 END) AS failed,
                    SUM(CASE WHEN result_state = 'CANCELED' THEN 1 ELSE 0 END) AS canceled
             FROM system.lakeflow.job_run_timeline
-            WHERE period_start_time >= current_date() - INTERVAL 30 DAYS
+            WHERE period_start_time >= current_date() - INTERVAL 30 DAYS{self._ws_filter()}
         """, "jobs-run-stats-30d")
         if ok and rows and rows[0].get("total_runs"):
             result["available"] = True
@@ -575,12 +636,12 @@ class SystemTablesCollector(BaseCollector):
             result["success_rate_pct"] = round(((total - failed) / total) * 100, 2) if total > 0 else 0
 
         # Top failing jobs
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT job_id,
                    COUNT(*) AS total_runs,
                    SUM(CASE WHEN result_state IN ('FAILED', 'TIMEDOUT', 'INTERNAL_ERROR') THEN 1 ELSE 0 END) AS failures
             FROM system.lakeflow.job_run_timeline
-            WHERE period_start_time >= current_date() - INTERVAL 30 DAYS
+            WHERE period_start_time >= current_date() - INTERVAL 30 DAYS{self._ws_filter()}
             GROUP BY job_id
             HAVING failures > 0
             ORDER BY failures DESC
@@ -598,11 +659,11 @@ class SystemTablesCollector(BaseCollector):
         result: dict[str, Any] = {"available": False}
 
         # Audit event counts by action category (last 30 days)
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT action_name,
                    COUNT(*) AS event_count
             FROM system.access.audit
-            WHERE event_date >= current_date() - INTERVAL 30 DAYS
+            WHERE event_date >= current_date() - INTERVAL 30 DAYS{self._ws_filter()}
             GROUP BY action_name
             ORDER BY event_count DESC
             LIMIT 30
@@ -613,18 +674,18 @@ class SystemTablesCollector(BaseCollector):
             result["total_events_30d"] = sum(int(r.get("event_count") or 0) for r in rows)
 
         # Failed authentication attempts
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT COUNT(*) AS failed_logins
             FROM system.access.audit
             WHERE event_date >= current_date() - INTERVAL 30 DAYS
               AND action_name IN ('login', 'tokenLogin', 'aadTokenLogin')
-              AND response.status_code >= 400
+              AND response.status_code >= 400{self._ws_filter()}
         """, "audit-failed-logins-30d")
         if ok and rows:
             result["failed_logins_30d"] = int(rows[0].get("failed_logins") or 0)
 
         # Permission change events
-        rows, ok = self._run_sql("""
+        rows, ok = self._run_sql(f"""
             SELECT COUNT(*) AS permission_changes
             FROM system.access.audit
             WHERE event_date >= current_date() - INTERVAL 30 DAYS
@@ -632,7 +693,7 @@ class SystemTablesCollector(BaseCollector):
                 'changePermissions', 'updatePermissions',
                 'changeClusterAcl', 'changeDbTokenAcl',
                 'grantPermission', 'revokePermission'
-              )
+              ){self._ws_filter()}
         """, "audit-permission-changes-30d")
         if ok and rows:
             result["permission_changes_30d"] = int(rows[0].get("permission_changes") or 0)

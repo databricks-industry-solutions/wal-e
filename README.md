@@ -336,6 +336,8 @@ GRANT SELECT ON SCHEMA system.lakeflow TO `your-admin-user@company.com`;
 
 Without `--deep`, the 11 system-table BPs score as "partial" with a note explaining that deep scan is needed. This way the standard assessment still works perfectly with just the API.
 
+> **Scoped to the assessed workspace.** System tables are account-global, so WAL-E resolves the assessed workspace's `workspace_id` (from the Azure host, or via `system.access.workspaces_latest` on AWS/GCP) and filters every deep-scan query by it. A run against one workspace never aggregates cost, compute, query, job, or audit telemetry from other workspaces in the same account. If the id cannot be resolved, WAL-E flags the run as not workspace-scoped (`workspace_scoped: false`) rather than silently reporting account-wide numbers.
+
 ---
 
 ## Integration with AI Dev Kit

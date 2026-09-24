@@ -788,6 +788,10 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
   to assess actual cost trends, cluster idle time, query failure rates,
   job success rates, and security audit events.
 
+  {C.DIM}System tables are account-global, so deep-scan queries are scoped to the
+  assessed workspace_id (resolved from the host or system.access.workspaces_latest).
+  A run against one workspace does not aggregate telemetry from other workspaces.{C.RESET}
+
   {C.BOLD}Requires:{C.RESET}
     - A running SQL warehouse (note the warehouse ID)
     - SELECT grants on system schemas
@@ -903,6 +907,7 @@ def main() -> int:
     assess_parser.add_argument("--deep", action="store_true",
                                help="Deep scan: query system tables (billing, compute, query history, "
                                     "audit) via a SQL warehouse for operational reality analysis. "
+                                    "Scoped to the assessed workspace_id (system tables are account-global). "
                                     "Requires --warehouse-id and SELECT on system.* schemas.")
     assess_parser.add_argument("--warehouse-id", default="", metavar="ID",
                                help="SQL warehouse ID for --deep scan. If omitted, WAL-E auto-selects "
