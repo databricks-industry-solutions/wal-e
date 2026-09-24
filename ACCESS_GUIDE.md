@@ -182,7 +182,7 @@ wal-e assess --profile wal-assessment --output ./my-assessment --format all
 
 WAL-E will:
 1. Auto-detect your cloud provider (AWS / Azure / GCP)
-2. Run 30 read-only API call types to collect workspace metadata (plus per-endpoint detail calls for serving and Vector Search)
+2. Run 30 read-only API call types to collect workspace metadata (plus per-endpoint detail calls for serving and Vector Search, and per-job detail calls for jobs)
 3. Score 134 best practices across 7 pillars (145 with `--deep`)
 4. Generate reports in the output directory
 
@@ -266,6 +266,7 @@ WAL-E runs 7 collectors. Here is exactly what each one needs:
 | API Call | Permission | Admin Required? |
 |----------|-----------|-----------------|
 | `GET /api/2.1/jobs/list` | CAN_VIEW or admin | Admin for ALL jobs |
+| `GET /api/2.1/jobs/get?job_id=...` | CAN_VIEW or admin | Detail per job for Git-source detection (capped at 200) |
 | `GET /api/2.0/pipelines` | CAN_VIEW or admin | Admin for ALL pipelines |
 | `GET /api/2.0/serving-endpoints` | CAN_QUERY or admin | Admin for ALL endpoints |
 | `GET /api/2.0/repos` | CAN_READ or admin | Admin for ALL repos |
@@ -294,7 +295,7 @@ WAL-E runs 7 collectors. Here is exactly what each one needs:
 
 ## 6. Complete API Endpoint Reference
 
-**All calls are GET (read-only). 30 endpoint types; the AI collector also issues per-endpoint detail calls for serving and Vector Search (capped at 50 each). Zero write calls.**
+**All calls are GET (read-only). 30 endpoint types; the AI collector also issues per-endpoint detail calls for serving and Vector Search (capped at 50 each), and the operations collector issues per-job detail calls for Git-source detection (capped at 200). `jobs/list` is paginated, so large workspaces issue several list calls. Zero write calls.**
 
 ```
 # Authentication (2 calls)
@@ -321,8 +322,9 @@ GET /api/2.0/preview/scim/v2/ServicePrincipals
 GET /api/2.0/preview/scim/v2/Groups?attributes=displayName,externalId
 GET /api/2.0/preview/scim/v2/Users?attributes=userName,externalId
 
-# Operations (7 calls)
-GET /api/2.1/jobs/list
+# Operations (7 endpoint types + per-job detail)
+GET /api/2.1/jobs/list                                    # paginated (100 jobs/page)
+GET /api/2.1/jobs/get?job_id=...                          # detail per job for git_source (capped 200)
 GET /api/2.0/pipelines
 GET /api/2.0/serving-endpoints
 GET /api/2.0/repos

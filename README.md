@@ -87,7 +87,7 @@ The assessment’s scoring model is the **Well-Architected Lakehouse Framework**
 
 > **Full guide:** See [ACCESS_GUIDE.md](ACCESS_GUIDE.md) for the complete self-service setup guide, permissions reference, and customer-facing instructions.
 
-WAL-E needs **read-only** access to the workspace. It makes **30 HTTP GET API call types** (plus per-endpoint detail calls for serving and Vector Search) and **zero write calls**.
+WAL-E needs **read-only** access to the workspace. It makes **30 HTTP GET API call types** (plus per-endpoint detail calls for serving and Vector Search, and per-job detail calls for jobs; `jobs/list` is paginated) and **zero write calls**.
 
 ### Permissions by Assessment Depth
 
