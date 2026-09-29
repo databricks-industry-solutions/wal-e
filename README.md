@@ -312,9 +312,8 @@ The standard assessment uses read-only REST API calls. For a deeper analysis, WA
 # Deep scan requires a running SQL warehouse and SELECT grants on system.* schemas
 wal-e assess --profile wal-assessment --deep --warehouse-id <YOUR_WAREHOUSE_ID>
 
-# Add --account-profile to confirm account-level network isolation, account SCIM,
-# and log delivery (needs a CLI profile for the accounts-console host with account_id)
-wal-e assess --profile wal-assessment --deep --warehouse-id <ID> --account-profile wal-account
+# To also confirm account-level controls (network, account SCIM, log delivery),
+# see "Account Admin Mode" below.
 ```
 
 Deep scan adds **11 additional best practices** (145 total) covering:
@@ -341,6 +340,44 @@ GRANT SELECT ON SCHEMA system.lakeflow TO `your-admin-user@company.com`;
 Without `--deep`, the 11 system-table BPs score as "partial" with a note explaining that deep scan is needed. This way the standard assessment still works perfectly with just the API.
 
 > **Scoped to the assessed workspace.** System tables are account-global, so WAL-E resolves the assessed workspace's `workspace_id` and filters every deep-scan query by it. Resolution is vanity-URL-proof: it reads the `X-Databricks-Org-Id` response header from a workspace API call (which equals the workspace id regardless of a custom/vanity hostname), with the Azure host (`adb-<id>…`) as a fast path and `system.access.workspaces_latest` as a fallback. A run against one workspace never aggregates cost, compute, query, job, or audit telemetry from other workspaces in the same account. If the id cannot be resolved, WAL-E flags the run as not workspace-scoped (`workspace_scoped: false`) rather than silently reporting account-wide numbers.
+
+---
+
+## Account Admin Mode (Confirming Account-Level Controls)
+
+By default, WAL-E queries only the workspace, so account-level controls — network isolation (Private Link/PSC, NCC, customer-managed VPC/VNet), account SCIM, and audit log delivery — are reported as *unverifiable*. Account admin mode confirms them by adding one flag, `--account-profile`, that points at a **second CLI profile** for the accounts-console host. When confirmed, these flip `sec-003` (network security) and `sec-011` (customer-managed VPC) to a verified score.
+
+### Step 1 (one-time): create the account profile
+
+The accounts-console API does not accept workspace PATs, so authenticate with OAuth (a browser window opens once):
+
+```bash
+# Accounts-console host by cloud:
+#   AWS:   https://accounts.cloud.databricks.com
+#   Azure: https://accounts.azuredatabricks.net
+#   GCP:   https://accounts.gcp.databricks.com
+databricks auth login --profile wal-account \
+  --host https://accounts.cloud.databricks.com \
+  --account-id <YOUR-ACCOUNT-ID>
+```
+
+This writes a `[wal-account]` section to `~/.databrickscfg` carrying the accounts host and `account_id`. Find your account ID in the top-right user menu of the accounts console.
+
+### Step 2: run with `--account-profile`
+
+```bash
+wal-e assess --profile wal-assessment --deep --warehouse-id <ID> \
+  --account-profile wal-account \
+  --output ./my-assessment --format all
+```
+
+> **Which profile is which?**
+> - `--profile wal-assessment` → the **workspace** (e.g. `https://your-workspace.cloud.databricks.com`). Used for all REST API collection and, with `--deep`, the system-tables queries. `--warehouse-id` is a SQL warehouse in this workspace.
+> - `--account-profile wal-account` → the **accounts console** (e.g. `https://accounts.cloud.databricks.com`). Used only for the account-level API calls.
+
+> **Requirement:** the identity behind `--account-profile` must be an **account admin**. Otherwise the account APIs return `This API is disabled for users without account admin status`, and those controls stay *unverifiable* — the workspace assessment still completes normally. On Azure, VNet injection is an ARM property and needs a separate ARM check even in account admin mode. For the full profile setup, see [ACCESS_GUIDE.md](ACCESS_GUIDE.md) (Step 3b).
+
+When you're done, remove the `[wal-account]` section from `~/.databrickscfg` along with `[wal-assessment]`.
 
 ---
 
