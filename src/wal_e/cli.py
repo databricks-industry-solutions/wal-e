@@ -559,6 +559,8 @@ def _run_assess(args: argparse.Namespace) -> int:
         formats=args.format or ["md", "csv", "pptx", "audit", "docx"],
         deep_scan=deep,
         warehouse_id=wh_id,
+        account_profile=getattr(args, "account_profile", ""),
+        account_id=getattr(args, "account_id", ""),
     )
     engine = AssessmentEngine(config)
 
@@ -668,6 +670,13 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
       --host https://YOUR-WORKSPACE-URL --token
   {C.DIM}# Paste the PAT token when prompted{C.RESET}
 
+  {C.BOLD}Optional: account-admin profile (for --account-profile){C.RESET}
+  {C.DIM}# Separate profile targeting the accounts-console host (OAuth only; PATs
+  # are not accepted). AWS: accounts.cloud.databricks.com | Azure:
+  # accounts.azuredatabricks.net | GCP: accounts.gcp.databricks.com{C.RESET}
+  {C.CYAN}${C.RESET} databricks auth login --profile wal-account \\
+      --host https://accounts.cloud.databricks.com --account-id <ACCOUNT-ID>
+
 {C.BOLD}STEP 2: VALIDATE ACCESS (30 seconds){C.RESET}
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
 
@@ -681,6 +690,10 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
 
   Or for a quick scan:
   {C.CYAN}${C.RESET} wal-e assess --profile wal-assessment --output ./my-assessment --format all
+
+  To confirm account-level controls, add the account profile from Step 1:
+  {C.CYAN}${C.RESET} wal-e assess --profile wal-assessment --deep --warehouse-id <ID> \\
+      --account-profile wal-account
 
 {C.BOLD}STEP 4: REVIEW RESULTS WITH YOUR SA{C.RESET}
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
@@ -697,25 +710,23 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
 
   1. If you used a PAT: revoke it in Settings > Developer > Access tokens > Revoke
-  2. Remove CLI profile: edit ~/.databrickscfg, delete [wal-assessment]
+  2. Remove CLI profile: edit ~/.databrickscfg, delete [wal-assessment] (and [wal-account])
   3. Delete local files: rm -rf ./my-assessment
 
 {C.BOLD}COVERAGE BY ACCESS LEVEL{C.RESET}
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
 
   Role                         Coverage
-  {C.GREEN}Account admin (recommended){C.RESET} .. ~95% + unlocks --deep system tables; account-level controls stay UNVERIFIABLE (see note)
+  {C.GREEN}Account admin (recommended){C.RESET} .. 100% — all pillars; add --account-profile to confirm account-level network isolation (Private Link/NCC/customer-managed VPC), account SCIM, and log delivery
   {C.GREEN}Metastore admin{C.RESET} .............. ~95% of best practices scored
   {C.YELLOW}Workspace admin{C.RESET} .............. ~80% of best practices scored
   Regular user ................. ~40% of best practices scored
 
-  {C.DIM}Account admin is recommended because it enables the --deep system-tables scan
-  (billing, audit events, query history). It does NOT let WAL-E confirm account-level
-  controls — customer-managed VPC/VNet, Private Link/PSC, NCC, account SSO/SCIM, and
-  audit log delivery live in the accounts-console API, which WAL-E's workspace-only
-  collection never calls. WAL-E reports those as UNVERIFIABLE until the dedicated
-  account-level assessment path (currently in testing) lands; Azure VNet injection
-  additionally needs an ARM check.{C.RESET}
+  {C.DIM}Account-level controls (network isolation, account SCIM, log delivery) live on the
+  accounts-console host, not the workspace API. Pass --account-profile <profile> (a separate
+  CLI profile for the accounts host, with account_id) to confirm them; otherwise they are
+  reported as unverifiable. On Azure, VNet injection is an ARM property and still needs an
+  ARM check even with --account-profile.{C.RESET}
 
 {C.BOLD}API CALLS MADE (ALL READ-ONLY){C.RESET}
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
@@ -735,6 +746,14 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
     GET  /api/2.0/sql/warehouses
     GET  /api/2.0/cluster-policies/list
     GET  /api/2.0/instance-pools/list
+
+  {C.BLUE}Account (optional){C.RESET}              {C.DIM}[--account-profile; account admin]{C.RESET}
+    GET  /api/2.0/accounts/{{id}}/workspaces
+    GET  /api/2.0/accounts/{{id}}/networks
+    GET  /api/2.0/accounts/{{id}}/private-access-settings
+    GET  /api/2.0/accounts/{{id}}/network-connectivity-configs
+    GET  /api/2.0/accounts/{{id}}/scim/v2/Groups
+    GET  /api/2.0/accounts/{{id}}/log-delivery
 
   {C.BLUE}Security (6 calls){C.RESET}              {C.DIM}[workspace admin REQUIRED]{C.RESET}
     GET  /api/2.0/workspace-conf
@@ -910,6 +929,10 @@ def main() -> int:
                                     "audit) via a SQL warehouse for operational reality analysis. "
                                     "Scoped to the assessed workspace_id (system tables are account-global). "
                                     "Requires --warehouse-id and SELECT on system.* schemas.")
+    assess_parser.add_argument("--account-profile", default="", metavar="PROFILE",
+        help="CLI profile for the accounts-console host (account admin). Confirms account-level network isolation (Private Link/NCC/customer-managed VPC), account SCIM, and log delivery that a workspace-only run reports as unverifiable.")
+    assess_parser.add_argument("--account-id", default="", metavar="UUID",
+        help="Databricks account UUID. Optional if the account profile already carries account_id.")
     assess_parser.add_argument("--warehouse-id", default="", metavar="ID",
                                help="SQL warehouse ID for --deep scan. If omitted, WAL-E auto-selects "
                                     "the best available warehouse (prefers serverless).")
