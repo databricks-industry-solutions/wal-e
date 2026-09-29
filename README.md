@@ -317,6 +317,10 @@ wal-e assess --profile wal-assessment --deep --warehouse-id <YOUR_WAREHOUSE_ID>
 wal-e assess --profile wal-assessment --deep --warehouse-id <ID> --account-profile wal-account
 ```
 
+> **Which profile is which?**
+> - `--profile wal-assessment` → the **workspace** (e.g. `https://your-workspace.cloud.databricks.com`). Used for all REST API collection and, with `--deep`, the system-tables queries. `--warehouse-id` is a SQL warehouse in this workspace.
+> - `--account-profile wal-account` → the **accounts console** (e.g. `https://accounts.cloud.databricks.com`). Used only for the account-level API calls. The identity behind it must be an **account admin**.
+
 Deep scan adds **11 additional best practices** (145 total) covering:
 
 | Area            | What it reveals                                                  | System Table                                          |
