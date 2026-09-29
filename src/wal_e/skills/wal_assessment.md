@@ -55,7 +55,7 @@ Options:
 - `--profile <name>` – Databricks CLI profile
 - `--output <dir>` – Output directory (default: `./assessment-results`)
 - `--format md,csv,html,pptx,audit` – Report formats
-- `--deep --warehouse-id <ID>` – Add 11 system-table best practices (cost trends, idle clusters, query/job failure rates, audit events). Requires a running SQL warehouse and `SELECT` on `system.*` schemas (`billing`, `compute`, `query`, `access`, `lakeflow`).
+- `--deep --warehouse-id <ID>` – Add 11 system-table best practices (cost trends, idle clusters, query/job failure rates, audit events). Requires a running SQL warehouse and `SELECT` on `system.*` schemas (`billing`, `compute`, `query`, `access`, `lakeflow`). Deep-scan queries are scoped to the assessed `workspace_id` (system tables are account-global), resolved vanity-URL-proof from the `X-Databricks-Org-Id` API header (Azure host and `system.access.workspaces_latest` as fallbacks), so a run against one workspace does not aggregate other workspaces' telemetry.
 
 ### 4. Interpret Results
 

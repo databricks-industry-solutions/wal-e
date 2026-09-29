@@ -670,6 +670,13 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
       --host https://YOUR-WORKSPACE-URL --token
   {C.DIM}# Paste the PAT token when prompted{C.RESET}
 
+  {C.BOLD}Optional: account-admin profile (for --account-profile){C.RESET}
+  {C.DIM}# Separate profile targeting the accounts-console host (OAuth only; PATs
+  # are not accepted). AWS: accounts.cloud.databricks.com | Azure:
+  # accounts.azuredatabricks.net | GCP: accounts.gcp.databricks.com{C.RESET}
+  {C.CYAN}${C.RESET} databricks auth login --profile wal-account \\
+      --host https://accounts.cloud.databricks.com --account-id <ACCOUNT-ID>
+
 {C.BOLD}STEP 2: VALIDATE ACCESS (30 seconds){C.RESET}
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
 
@@ -683,6 +690,10 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
 
   Or for a quick scan:
   {C.CYAN}${C.RESET} wal-e assess --profile wal-assessment --output ./my-assessment --format all
+
+  To confirm account-level controls, add the account profile from Step 1:
+  {C.CYAN}${C.RESET} wal-e assess --profile wal-assessment --deep --warehouse-id <ID> \\
+      --account-profile wal-account
 
 {C.BOLD}STEP 4: REVIEW RESULTS WITH YOUR SA{C.RESET}
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
@@ -699,7 +710,7 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
 {C.DIM}──────────────────────────────────────────────────────────────{C.RESET}
 
   1. If you used a PAT: revoke it in Settings > Developer > Access tokens > Revoke
-  2. Remove CLI profile: edit ~/.databrickscfg, delete [wal-assessment]
+  2. Remove CLI profile: edit ~/.databrickscfg, delete [wal-assessment] (and [wal-account])
   3. Delete local files: rm -rf ./my-assessment
 
 {C.BOLD}COVERAGE BY ACCESS LEVEL{C.RESET}
@@ -712,8 +723,8 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
   Regular user ................. ~40% of best practices scored
 
   {C.DIM}Account-level controls (network isolation, account SCIM, log delivery) live on the
-  accounts-console host, not the workspace API. Pass --account-profile <profile> (a CLI
-  profile for the accounts host, with account_id) to confirm them; otherwise they are
+  accounts-console host, not the workspace API. Pass --account-profile <profile> (a separate
+  CLI profile for the accounts host, with account_id) to confirm them; otherwise they are
   reported as unverifiable. On Azure, VNet injection is an ARM property and still needs an
   ARM check even with --account-profile.{C.RESET}
 
@@ -795,6 +806,11 @@ WAL-E makes {C.BOLD}21 read-only API calls{C.RESET} to assess your workspace.
   For a {C.GREEN}deep scan{C.RESET} (+11 best practices), WAL-E also queries system tables
   to assess actual cost trends, cluster idle time, query failure rates,
   job success rates, and security audit events.
+
+  {C.DIM}System tables are account-global, so deep-scan queries are scoped to the
+  assessed workspace_id (resolved vanity-URL-proof from the X-Databricks-Org-Id
+  API header, with the host and system.access.workspaces_latest as fallbacks).
+  A run against one workspace does not aggregate telemetry from other workspaces.{C.RESET}
 
   {C.BOLD}Requires:{C.RESET}
     - A running SQL warehouse (note the warehouse ID)
@@ -911,6 +927,7 @@ def main() -> int:
     assess_parser.add_argument("--deep", action="store_true",
                                help="Deep scan: query system tables (billing, compute, query history, "
                                     "audit) via a SQL warehouse for operational reality analysis. "
+                                    "Scoped to the assessed workspace_id (system tables are account-global). "
                                     "Requires --warehouse-id and SELECT on system.* schemas.")
     assess_parser.add_argument("--account-profile", default="", metavar="PROFILE",
         help="CLI profile for the accounts-console host (account admin). Confirms account-level network isolation (Private Link/NCC/customer-managed VPC), account SCIM, and log delivery that a workspace-only run reports as unverifiable.")

@@ -162,6 +162,25 @@ databricks configure --profile wal-assessment \
 # When prompted, paste the PAT token you just created
 ```
 
+### Step 3b (optional): Configure an account-admin profile
+
+Only needed if you want WAL-E to **confirm** account-level controls (network isolation, account SCIM, audit log delivery) instead of reporting them as *unverifiable*. Requires **account admin**. This is a **separate** CLI profile from `wal-assessment` because it targets the accounts-console host, not the workspace.
+
+The accounts-console API does not accept workspace PATs, so authenticate with OAuth (a browser window opens once):
+
+```bash
+# Pick the accounts-console host for your cloud:
+#   AWS:   https://accounts.cloud.databricks.com
+#   Azure: https://accounts.azuredatabricks.net
+#   GCP:   https://accounts.gcp.databricks.com
+databricks auth login \
+  --profile wal-account \
+  --host https://accounts.cloud.databricks.com \
+  --account-id <YOUR-ACCOUNT-ID>
+```
+
+This writes a `[wal-account]` section to `~/.databrickscfg` carrying the accounts host and `account_id` (find your account ID in the top-right user menu of the accounts console). WAL-E auto-resolves `account_id` from this profile, so `--account-id` is optional on the command line. Pass the profile at run time with `--account-profile wal-account`.
+
 ### Step 4: Validate Access (30 seconds)
 
 ```bash
@@ -179,11 +198,14 @@ wal-e assess --profile wal-assessment --interactive
 
 # Or quick scan with all report formats
 wal-e assess --profile wal-assessment --output ./my-assessment --format all
+
+# Add --account-profile (from Step 3b) to confirm account-level controls
+wal-e assess --profile wal-assessment --deep --warehouse-id <ID> --account-profile wal-account
 ```
 
 WAL-E will:
 1. Auto-detect your cloud provider (AWS / Azure / GCP)
-2. Run 30 read-only API call types to collect workspace metadata (plus per-endpoint detail calls for serving and Vector Search)
+2. Run 30 read-only API call types to collect workspace metadata (plus per-endpoint detail calls for serving and Vector Search, and per-job detail calls for jobs)
 3. Score 134 best practices across 7 pillars (145 with `--deep`)
 4. Generate reports in the output directory
 
@@ -209,8 +231,9 @@ The output directory contains:
 # 1. Revoke your PAT token immediately:
 #    Workspace > Settings > Developer > Access tokens > Revoke
 
-# 2. Remove the CLI profile:
+# 2. Remove the CLI profile(s):
 #    Edit ~/.databrickscfg and delete the [wal-assessment] section
+#    (and [wal-account] if you created one in Step 3b)
 
 # 3. Delete local assessment files (after you've saved what you need):
 rm -rf ./my-assessment
@@ -220,7 +243,7 @@ rm -rf ./my-assessment
 
 ## 5. Required Permissions by Collector
 
-> **Recommended role: account admin.** WAL-E works at any access level, but an account admin gives the truest, most accurate assessment across all seven pillars — it unlocks the `--deep` system-tables scan and is what lets you confirm the account-level controls (SSO, SCIM, network isolation, audit logging) that a workspace-only role can only report as *unverifiable*. See [Permissions by Coverage](#permissions-by-coverage) for the full role ladder.
+> **Recommended role: account admin.** WAL-E works at any access level; account admin is recommended because it unlocks the `--deep` system-tables scan (billing, audit events, query history). Account-level controls (customer-managed VPC/VNet, Private Link/PSC, NCC, account SCIM, audit log delivery) are served by the accounts-console API, which WAL-E's workspace-only collection does not call — so by default WAL-E reports them as *unverifiable*. To confirm them, add an account-admin profile (see [Step 3b](#step-3b-optional-configure-an-account-admin-profile)) and pass `--account-profile`; account SSO stays unverifiable, and Azure VNet injection additionally needs an ARM check. See [Permissions by Coverage](#permissions-by-coverage) for the full role ladder.
 
 WAL-E runs 7 collectors. Here is exactly what each one needs:
 
@@ -267,6 +290,7 @@ WAL-E runs 7 collectors. Here is exactly what each one needs:
 | API Call | Permission | Admin Required? |
 |----------|-----------|-----------------|
 | `GET /api/2.1/jobs/list` | CAN_VIEW or admin | Admin for ALL jobs |
+| `GET /api/2.1/jobs/get?job_id=...` | CAN_VIEW or admin | Detail per job for Git-source detection (capped at 200) |
 | `GET /api/2.0/pipelines` | CAN_VIEW or admin | Admin for ALL pipelines |
 | `GET /api/2.0/serving-endpoints` | CAN_QUERY or admin | Admin for ALL endpoints |
 | `GET /api/2.0/repos` | CAN_READ or admin | Admin for ALL repos |
@@ -295,7 +319,7 @@ WAL-E runs 7 collectors. Here is exactly what each one needs:
 
 ## 6. Complete API Endpoint Reference
 
-**All calls are GET (read-only). 30 endpoint types; the AI collector also issues per-endpoint detail calls for serving and Vector Search (capped at 50 each). Zero write calls.**
+**All calls are GET (read-only). 30 endpoint types; the AI collector also issues per-endpoint detail calls for serving and Vector Search (capped at 50 each), and the operations collector issues per-job detail calls for Git-source detection (capped at 200). `jobs/list` is paginated, so large workspaces issue several list calls. Zero write calls.**
 
 ```
 # Authentication (2 calls)
@@ -322,8 +346,9 @@ GET /api/2.0/preview/scim/v2/ServicePrincipals
 GET /api/2.0/preview/scim/v2/Groups?attributes=displayName,externalId
 GET /api/2.0/preview/scim/v2/Users?attributes=userName,externalId
 
-# Operations (7 calls)
-GET /api/2.1/jobs/list
+# Operations (7 endpoint types + per-job detail)
+GET /api/2.1/jobs/list                                    # paginated (100 jobs/page)
+GET /api/2.1/jobs/get?job_id=...                          # detail per job for git_source (capped 200)
 GET /api/2.0/pipelines
 GET /api/2.0/serving-endpoints
 GET /api/2.0/repos
@@ -359,6 +384,8 @@ GRANT SELECT ON SCHEMA system.lakeflow TO `your-admin-user@company.com`;
 ```
 
 **Note:** System table access is **optional**. WAL-E produces a complete assessment using only the REST API calls above.
+
+**Workspace scoping:** System tables are account-global. WAL-E resolves the assessed workspace's `workspace_id` — via the `X-Databricks-Org-Id` API response header (vanity-URL-proof), with the Azure host and `system.access.workspaces_latest` as fallbacks — and filters every deep-scan query by it, so a run against one workspace does not aggregate telemetry from other workspaces in the account.
 
 ---
 
@@ -424,14 +451,16 @@ Install through whichever interpreter reports 3.10 or newer, using `<that-python
 
 ### Permissions by Coverage
 
-> **Account admin is highly recommended.** It produces the most complete and accurate picture across all seven pillars, is required to enable the `--deep` system-tables scan, and is what lets you confirm the account-level controls — SSO, SCIM, network isolation, and audit logging — that a workspace-only role can only mark as *unverifiable*.
+> **Account admin is highly recommended** — it enables the `--deep` system-tables scan (billing, audit events, query history) and, with an account-admin profile (see [Step 3b](#step-3b-optional-configure-an-account-admin-profile)), lets WAL-E **confirm** account-level controls. Without `--account-profile`, account-level controls — customer-managed VPC/VNet, Private Link/PSC, NCC, account SCIM, and audit log delivery — are served only by the accounts-console API, which WAL-E's workspace-only collection does not call, so WAL-E marks them *unverifiable*. Passing `--account-profile` confirms network isolation, account SCIM, and log delivery; account SSO stays unverifiable, and Azure VNet injection additionally needs an ARM check.
 
 | Role | Access Level | Coverage |
 |------|-------------|:--------:|
-| **Account admin** _(recommended)_ | Workspace + metastore admin + system tables | **100%** |
+| **Account admin** _(recommended)_ | Workspace + metastore admin + system tables + `--account-profile` | **100%\*** |
 | Metastore admin | Workspace admin + metastore admin | **~95%** |
 | Workspace admin | Workspace admin | **~80%** |
 | User | Regular user | ~40% of best practices |
+
+\* Reaching 100% requires `--deep` (system-tables scan, +11 deep-scan best practices) **and** `--account-profile` (account-level confirmation). Without `--account-profile`, account-level controls (customer-managed VPC/VNet, Private Link/PSC, NCC, account SCIM, audit log delivery) stay *unverifiable* because they live in the accounts-console API, which WAL-E's workspace-only collection does not call. With `--account-profile`, network isolation, account SCIM, and log delivery are confirmed; account SSO stays unverifiable, and Azure VNet injection additionally needs an ARM check.
 
 ---
 

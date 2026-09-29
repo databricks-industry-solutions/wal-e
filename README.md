@@ -87,11 +87,11 @@ The assessment’s scoring model is the **Well-Architected Lakehouse Framework**
 
 > **Full guide:** See [ACCESS_GUIDE.md](ACCESS_GUIDE.md) for the complete self-service setup guide, permissions reference, and customer-facing instructions.
 
-WAL-E needs **read-only** access to the workspace. It makes **30 HTTP GET API call types** (plus per-endpoint detail calls for serving and Vector Search, and 6 optional account-API call types when `--account-profile` is supplied) and **zero write calls**.
+WAL-E needs **read-only** access to the workspace. It makes **30 HTTP GET API call types** (plus per-endpoint detail calls for serving and Vector Search, and per-job detail calls for jobs; `jobs/list` is paginated; and 6 optional account-API call types when `--account-profile` is supplied) and **zero write calls**.
 
 ### Permissions by Assessment Depth
 
-> **Run as an account admin (highly recommended).** Account-admin access, together with the `--deep` system-tables scan, produces the most complete and accurate assessment across all seven pillars. To actually *confirm* account-level controls (network isolation, account SCIM, audit log delivery) — which a workspace-only role can only report as *unverifiable* — also pass `--account-profile <profile>` (a CLI profile for the accounts-console host that carries `account_id`). Without `--account-profile`, WAL-E queries only the workspace API and these controls stay unverifiable. On Azure, VNet injection is an ARM property and still requires an ARM check even with `--account-profile`.
+> **Run as an account admin (highly recommended).** Account-admin access, together with the `--deep` system-tables scan, produces the most complete and accurate assessment across all seven pillars. To actually *confirm* account-level controls (network isolation, account SCIM, audit log delivery) — which a workspace-only role can only report as *unverifiable* — also pass `--account-profile <profile>` (a separate CLI profile for the accounts-console host that carries `account_id`; see [ACCESS_GUIDE.md](ACCESS_GUIDE.md) for how to create it). Without `--account-profile`, WAL-E queries only the workspace API and these controls stay unverifiable. On Azure, VNet injection is an ARM property and still requires an ARM check even with `--account-profile`.
 
 | Role                              | Access Level                                 | What You Get                                                                                        | Coverage |
 | --------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------- | :------: |
@@ -100,7 +100,9 @@ WAL-E needs **read-only** access to the workspace. It makes **30 HTTP GET API ca
 | Workspace admin                   | Workspace admin                              | All clusters, warehouses, security config, all jobs                                                 | **~80%** |
 | User                              | Regular user                                 | Own clusters, permitted catalogs, own jobs                                                          |   ~40%   |
 
-**Recommended:** account admin for a true, all-pillar picture; at minimum workspace admin + metastore admin for a meaningful assessment.
+**Recommended:** account admin with both `--deep` (system-tables scan) and `--account-profile` (account-level confirmation); at minimum workspace admin + metastore admin for a meaningful assessment.
+
+Without `--account-profile`, account-level controls — customer-managed VPC/VNet, Private Link/PSC, Network Connectivity Configs, account SSO/SCIM, and audit log delivery — are served only by the accounts-console API, which WAL-E's workspace-only collection does not call, so WAL-E marks them *unverifiable* rather than as gaps. Passing `--account-profile` confirms network isolation, account SCIM, and log delivery; account SSO stays unverifiable, and Azure VNet injection additionally needs an ARM check.
 
 ### What WAL-E Will NEVER Do
 
@@ -337,6 +339,8 @@ GRANT SELECT ON SCHEMA system.lakeflow TO `your-admin-user@company.com`;
 ```
 
 Without `--deep`, the 11 system-table BPs score as "partial" with a note explaining that deep scan is needed. This way the standard assessment still works perfectly with just the API.
+
+> **Scoped to the assessed workspace.** System tables are account-global, so WAL-E resolves the assessed workspace's `workspace_id` and filters every deep-scan query by it. Resolution is vanity-URL-proof: it reads the `X-Databricks-Org-Id` response header from a workspace API call (which equals the workspace id regardless of a custom/vanity hostname), with the Azure host (`adb-<id>…`) as a fast path and `system.access.workspaces_latest` as a fallback. A run against one workspace never aggregates cost, compute, query, job, or audit telemetry from other workspaces in the same account. If the id cannot be resolved, WAL-E flags the run as not workspace-scoped (`workspace_scoped: false`) rather than silently reporting account-wide numbers.
 
 ---
 

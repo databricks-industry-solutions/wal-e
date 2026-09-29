@@ -53,6 +53,7 @@ class AssessmentEngine:
                     config.profile_name,
                     config.warehouse_id,
                     cloud_provider=config.cloud_provider,
+                    workspace_host=config.workspace_host,
                 )
             )
         # Account-level confirmation of network/SCIM/audit controls that the

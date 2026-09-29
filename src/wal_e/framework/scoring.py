@@ -545,12 +545,17 @@ def _score_ops_003(data: dict) -> tuple[int, str]:
     """Standardize CI/CD."""
     ops = _get(data, "OperationsCollector") or {}
     jobs = ops.get("jobs", []) or []
-    git_jobs = sum(1 for j in jobs if isinstance(j, dict) and j.get("has_git_source"))
+    # A job is CI/CD-managed via Git source OR Databricks Asset Bundles. Fall
+    # back to has_git_source for older cached data without the is_cicd_managed key.
+    cicd_jobs = sum(
+        1 for j in jobs
+        if isinstance(j, dict) and j.get("is_cicd_managed", j.get("has_git_source"))
+    )
     job_count = ops.get("job_count", 0) or len(jobs)
-    if git_jobs > 0:
-        return 2, f"{git_jobs}/{job_count} job(s) use Git source — CI/CD integration in place."
+    if cicd_jobs > 0:
+        return 2, f"{cicd_jobs}/{job_count} job(s) deployed via CI/CD (Git source or Databricks Asset Bundles)."
     if job_count > 0:
-        return 1, f"{job_count} jobs present but none use Git source. Use Repos and Git-backed job tasks for CI/CD."
+        return 1, f"{job_count} jobs present but none appear CI/CD-managed. Deploy jobs via Databricks Asset Bundles or Git-backed tasks."
     return 0, "No jobs; adopt CI/CD for deployments."
 
 
@@ -695,10 +700,17 @@ def _score_ops_021(data: dict) -> tuple[int, str]:
     """Automated rollbacks (CI/CD Best Practices)."""
     ops = _get(data, "OperationsCollector") or {}
     jobs = ops.get("jobs", []) or []
-    git_jobs = sum(1 for j in jobs if isinstance(j, dict) and j.get("has_git_source"))
-    if git_jobs > 0:
-        return 1, f"{git_jobs} job(s) use Git source. Verify automated rollback mechanisms in CI/CD pipelines."
-    return 0, "No Git-backed jobs detected. Implement CI/CD with automated rollback mechanisms."
+    bundle_jobs = sum(1 for j in jobs if isinstance(j, dict) and j.get("deployment_kind") == "BUNDLE")
+    cicd_jobs = sum(
+        1 for j in jobs
+        if isinstance(j, dict) and j.get("is_cicd_managed", j.get("has_git_source"))
+    )
+    job_count = ops.get("job_count", 0) or len(jobs)
+    if bundle_jobs > 0:
+        return 2, f"{bundle_jobs}/{job_count} job(s) deployed via Databricks Asset Bundles — versioned redeploy of a prior revision provides automated rollback."
+    if cicd_jobs > 0:
+        return 1, f"{cicd_jobs}/{job_count} job(s) are Git/CI-CD managed. Adopt Databricks Asset Bundles for versioned, rollback-capable deployments."
+    return 0, "No CI/CD-managed jobs detected. Deploy jobs via Databricks Asset Bundles or Git-backed tasks for automated rollback."
 
 
 def _score_ops_022(data: dict) -> tuple[int, str]:
