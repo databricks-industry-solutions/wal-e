@@ -4,6 +4,10 @@ name: Release
 # on main. Bump the version (in pyproject.toml and src/wal_e/__init__.py) in a PR,
 # merge it, and this workflow tags v<version> and publishes the release. If the tag
 # already exists it no-ops, so re-runs are safe.
+#
+# Requires GitHub Actions to be enabled for the repo (Settings > Actions > General).
+# Can also be run on demand from the Actions tab via "Run workflow" (workflow_dispatch),
+# which reads the current version from pyproject.toml just like the push trigger.
 
 on:
   push:
@@ -11,6 +15,7 @@ on:
     paths:
       - pyproject.toml
       - src/wal_e/__init__.py
+  workflow_dispatch:
 
 permissions:
   contents: write

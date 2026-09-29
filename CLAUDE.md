@@ -47,6 +47,8 @@ Releases are automated by `.github/workflows/release.yml`. To cut a release:
 
 On merge, the workflow tags `v<version>` and publishes a GitHub release with generated notes. If the tag already exists it no-ops. Tags are never moved — a new release always requires a new version. There is no separate test/CI workflow yet; the release job runs `pytest` before publishing.
 
+**Prerequisite:** GitHub Actions must be **enabled** for the repo (Settings > Actions > General). If Actions is disabled, no workflow runs on push and releases must be cut manually (`git tag v<version> <sha> && git push origin v<version>` then `gh release create ... --generate-notes`). The workflow can also be run on demand from the Actions tab via **Run workflow** (`workflow_dispatch`).
+
 ## Architecture
 
 | Component | Path | Description |
