@@ -362,7 +362,7 @@ Deep scan adds **11 additional best practices** (145 total) covering:
 | **Performance** | Query failure rate, slow query prevalence, warehouse utilization | `system.query.history`                                |
 | **Reliability** | Job success rate, recurring job failures                         | `system.lakeflow.job_run_timeline`                    |
 | **Security**    | Failed login monitoring, permission change audit                 | `system.access.audit`                                 |
-| **Operations**  | Cluster utilization efficiency (idle/always-on clusters)         | `system.compute.node_timeline`, `system.compute.clusters` |
+| **Operations**  | Cluster utilization efficiency (idle/always-on clusters; continuous-trigger jobs and pipelines are exempt as 24/7 by design) | `system.compute.node_timeline`, `system.compute.clusters`, `system.lakeflow.job_run_timeline`, `system.lakeflow.job_task_run_timeline` |
 
 **Prerequisites for deep scan:**
 

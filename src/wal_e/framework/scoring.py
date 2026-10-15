@@ -1928,19 +1928,37 @@ def _score_ops_024(data: dict) -> tuple[int, str]:
         return 1, "Requires --deep scan with system tables. Cannot assess cluster utilization from API alone."
     ch = st["compute_history"]
     uptime = ch.get("cluster_uptime", [])
-    total_hours = ch.get("total_running_hours_30d", 0)
     if not uptime:
         return 1, "No cluster lifecycle data found."
-    active_clusters = len(uptime)
-    avg_hours = total_hours / active_clusters if active_clusters > 0 else 0
+    continuous_ids = {c.get("cluster_id") for c in ch.get("continuous_job_clusters", []) if isinstance(c, dict)}
+    streaming = [c for c in uptime if _is_streaming_cluster(c, continuous_ids)]
+    scored = [c for c in uptime if c not in streaming]
+    streaming_note = (
+        f" {len(streaming)} cluster(s) run 24/7 by design (continuous jobs / pipelines) and are excluded."
+        if streaming else ""
+    )
+    if not scored:
+        return 2, f"Only streaming compute is long-running.{streaming_note}"
+    active_clusters = len(scored)
+    avg_hours = sum(float(c.get("running_hours") or 0) for c in scored) / active_clusters
     # More than 500 hours per cluster in 30 days means nearly 24/7
-    always_on = [c for c in uptime if float(c.get("running_hours") or 0) > 500]
+    always_on = [c for c in scored if float(c.get("running_hours") or 0) > 500]
     if always_on:
-        names = ", ".join(c.get("cluster_name", "?")[:25] for c in always_on[:3])
-        return 0, f"{len(always_on)} clusters running ~24/7 ({names}). Convert to jobs or serverless."
+        names = ", ".join((c.get("cluster_name") or "?")[:25] for c in always_on[:3])
+        return 0, f"{len(always_on)} clusters running ~24/7 ({names}). Convert to jobs or serverless.{streaming_note}"
     if avg_hours > 200:
-        return 1, f"Average cluster uptime is {avg_hours:.0f}h/30d across {active_clusters} clusters. Review utilization."
-    return 2, f"{active_clusters} active clusters with avg {avg_hours:.0f}h uptime/30d. Utilization looks reasonable."
+        return 1, f"Average cluster uptime is {avg_hours:.0f}h/30d across {active_clusters} clusters. Review utilization.{streaming_note}"
+    return 2, f"{active_clusters} active clusters with avg {avg_hours:.0f}h uptime/30d. Utilization looks reasonable.{streaming_note}"
+
+
+def _is_streaming_cluster(cluster: dict, continuous_ids: set) -> bool:
+    """True for compute that stays up by design: pipeline clusters, or job clusters
+    serving a continuous-trigger job. All-purpose clusters are never exempt, since
+    streaming on them should move to job compute."""
+    source = str(cluster.get("cluster_source") or "").upper()
+    if source == "PIPELINE":
+        return True
+    return source == "JOB" and cluster.get("cluster_id") in continuous_ids
 
 
 # ---------------------------------------------------------------------------

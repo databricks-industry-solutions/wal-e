@@ -389,8 +389,9 @@ _REMEDIATION_KB: list[dict[str, Any]] = [
         "applies_to": ["cluster utilization efficiency", "24/7"],
         "why": "Clusters running 24/7 without workloads are the single largest source of wasted compute spend.",
         "steps": [
-            "Query system.compute.clusters to find clusters with >500 running hours/month.",
+            "Query system.compute.node_timeline to find clusters with >500 running hours/month.",
             "Convert always-on clusters to job clusters (ephemeral, created per job run).",
+            "Run streaming workloads as continuous-trigger jobs on job compute; WAL-E treats those as 24/7 by design.",
             "For interactive use cases, set aggressive auto-termination (10 min).",
             "Consider serverless compute for unpredictable workloads.",
         ],

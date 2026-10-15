@@ -411,13 +411,16 @@ class SystemTablesCollector(BaseCollector):
                 HAVING running_hours > 0
             ),
             names AS (
-                SELECT cluster_id, ANY_VALUE(cluster_name) AS cluster_name
+                SELECT cluster_id,
+                       ANY_VALUE(cluster_name) AS cluster_name,
+                       ANY_VALUE(cluster_source) AS cluster_source
                 FROM system.compute.clusters
                 WHERE 1 = 1{self._ws_filter()}
                 GROUP BY cluster_id
             )
             SELECT u.cluster_id,
                    n.cluster_name,
+                   n.cluster_source,
                    u.running_hours,
                    u.avg_cpu_pct
             FROM uptime u
@@ -430,6 +433,30 @@ class SystemTablesCollector(BaseCollector):
             result["cluster_uptime"] = rows
             total_running = sum(float(r.get("running_hours") or 0) for r in rows)
             result["total_running_hours_30d"] = round(total_running, 1)
+
+        # Clusters serving continuous-trigger jobs (streaming). These stay up 24/7 by
+        # design and must not be scored as always-on waste. Separate query so a
+        # missing system.lakeflow grant only loses this signal, not uptime itself.
+        rows, ok = self._run_sql(f"""
+            WITH continuous_runs AS (
+                SELECT DISTINCT job_id, run_id
+                FROM system.lakeflow.job_run_timeline
+                WHERE period_start_time >= current_date() - INTERVAL 30 DAYS
+                  AND trigger_type = 'CONTINUOUS'{self._ws_filter()}
+            ),
+            task_compute AS (
+                SELECT job_id, job_run_id, EXPLODE(compute_ids) AS cluster_id
+                FROM system.lakeflow.job_task_run_timeline
+                WHERE period_start_time >= current_date() - INTERVAL 30 DAYS{self._ws_filter()}
+            )
+            SELECT tc.cluster_id, ANY_VALUE(tc.job_id) AS job_id
+            FROM task_compute tc
+            JOIN continuous_runs cr ON tc.job_id = cr.job_id AND tc.job_run_id = cr.run_id
+            GROUP BY tc.cluster_id
+            LIMIT 500
+        """, "compute-continuous-job-clusters-30d")
+        if ok and rows is not None:
+            result["continuous_job_clusters"] = rows
 
         # Idle waste: clusters that ran for meaningful time but stayed near-idle
         # (average CPU under 10%), signalling over-provisioning or missing auto-stop.
